@@ -9,6 +9,13 @@ set -uo pipefail
 ng_env
 mkdir -p "$NG_RUN"
 
+# Export the status snapshot for the monitoring agent. SELinux keeps
+# zabbix_agent_t from making bpf() syscalls (sudo does not change the
+# domain), so the agent reads this file instead of running the tools.
+if [ -d /run/zabbix ]; then
+    /usr/local/sbin/nodeguard-status --kv > /run/zabbix/nodeguard.kv.tmp 2>/dev/null         && chmod 0644 /run/zabbix/nodeguard.kv.tmp         && mv -f /run/zabbix/nodeguard.kv.tmp /run/zabbix/nodeguard.kv || true
+fi
+
 # Nothing to guard before the maps exist.
 [ -e "$NG_PIN/config" ] || exit 0
 

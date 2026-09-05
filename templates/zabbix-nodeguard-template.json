@@ -35,6 +35,13 @@
         "expression": "last(/Nodeguard by Zabbix agent/nodeguard.kv[attach_state])<>\"attached\"",
         "priority": "WARNING",
         "description": "detached = fail open (no enforcement); unknown = xdp-loader broken, state unverifiable"
+       },
+       {
+        "uuid": "1ac3b673c37d4ec99d48f3310410755a",
+        "name": "nodeguard telemetry stale on {HOST.NAME}",
+        "expression": "nodata(/Nodeguard by Zabbix agent/nodeguard.kv[attach_state],10m)=1",
+        "priority": "WARNING",
+        "description": "The watchdog export or the agent path is dead; nodeguard state unknown to monitoring."
        }
       ]
      },

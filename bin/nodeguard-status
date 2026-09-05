@@ -59,6 +59,7 @@ except Exception:
 fi
 
 if [ "$kv" -eq 1 ]; then
+    echo "ng.ts=$(date +%s)"
     echo "ng.attached=$attached"
     case "$attached" in
     0) echo "ng.attach_state=detached" ;;

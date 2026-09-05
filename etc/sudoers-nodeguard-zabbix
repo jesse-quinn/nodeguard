@@ -1,2 +1,0 @@
-# Allow the zabbix agent to read nodeguard state (read-only status command).
-zabbix ALL=(root) NOPASSWD: /usr/local/sbin/nodeguard-status --kv
