@@ -688,3 +688,28 @@ Known accepted limitations:
 ## Amendments
 
 - 2026-09-04, post adversarial implementation review (28 findings resolved): the IPv4 WireGuard-port pass applies only at fragment offset zero; non-first fragments of a blocked source's WireGuard datagrams are dropped, accepted because WireGuard sets DF and the operator's own paths are covered by the allowlist. The kill switch verifies by read-back and the watchdog escalates to detach if the soft-off write fails. Attach state is three-valued; an xdp-loader failure is treated as "unknown, assume enforcing", never as detached. Allowlist reconciliation is performed with "systemctl reload nodeguard-maps" (ExecReload); a restart of that unit propagates through Requires= and blips the link. The per-host device drop-in uses Wants= plus After= for the NIC device unit. The deploy script owns /etc/logrotate.d/suricata (rename-based rotation; the responder drains and reopens across it) and refuses to run before the suricata RPM is installed. Responder TTL escalation counts block windows, not alert lines, and rate caps count attempts identically in dry-run and enforce modes.
+
+## Roadmap
+
+Adopted 2026-09-05 from docs/research/2026-09-05-xdp-dpi-antiddos-survey.md,
+in order; each ships through its own explore, adversarial review, and
+OpenSpec proposal cycle:
+
+1. Threat-intel feed loader (nodeguard-feeds): reputable CIDR feeds into the
+   block maps on a TTL that fails open by expiry. In design review now.
+2. Volumetric anomaly alerting: the watchdog diffs successive stats-map
+   snapshots against a rolling baseline and alerts on spikes. Userspace
+   only; no new drop path. Closes the distributed low-rate flood blind spot
+   at the observability layer.
+3. Protocol-sanity counters in the XDP program: count implausible frames
+   (impossible TCP flag combinations, TTL outliers) into new stats slots;
+   every new branch still resolves to XDP_PASS. Telemetry, never
+   enforcement.
+
+Deliberately deferred, evidence-gated: per-source rate limiting in the
+datapath. It would be a second, independent drop condition; it is not built
+until the volumetric alerting above shows a real flood problem on either
+host. Rejected with reasons in the survey: XDPeek (dispatcher-incompatible,
+redundant), nDPI (no gap versus Suricata here), XDP synproxy and
+connection-limit tracking (no stateful listener to defend), XDP-level
+sampling (redundant with the af-packet capture path).
