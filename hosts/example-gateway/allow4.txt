@@ -9,6 +9,7 @@
 # Upstream DNS resolvers you depend on:
 9.9.9.9/32
 149.112.112.112/32
-# MANDATORY before enforcement: your stable remote egress IPs (phone
-# hotspot, office, travel), so a false positive cannot lock you out.
+# SAFETY: MANDATORY before enforcement - add your stable remote egress
+# IPs (phone hotspot, office, travel), so a false positive cannot lock
+# you out.
 # 203.0.113.10/32

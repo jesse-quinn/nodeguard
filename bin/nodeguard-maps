@@ -76,8 +76,9 @@ if [ "${WAN_DYNAMIC_ALLOW:-no}" = "yes" ]; then
     fi
 fi
 
-# 4. Reconcile allow maps to static files + generated entries. Refuses to
-#    proceed if the canary target appears in any allow source.
+# 4. Reconcile allow maps to static files + generated entries.
+#    SAFETY: refuses to proceed if the canary target appears in any allow
+#    source (the watchdog's over-block probe must never be allowlisted).
 python3 "$NG_MAP" reconcile-allow \
     --static /etc/nodeguard/allow4.txt /etc/nodeguard/allow6.txt \
     --generated "$GEN" \

@@ -1,6 +1,6 @@
 #!/bin/bash
 # nodeguard-detach: unload nodeguard's own program id from $IFACE.
-# Never uses --all: coexisting dispatcher members survive.
+# INVARIANT: never uses --all; coexisting dispatcher members survive.
 set -uo pipefail
 . /usr/local/lib/nodeguard/nodeguard-lib.sh
 ng_env
@@ -9,8 +9,9 @@ ids=""
 if [ -f "$NG_RUN/prog_id" ]; then
     ids=$(cat "$NG_RUN/prog_id")
 fi
-# The recorded id can be stale (reboot, manual surgery); the dispatcher's
-# own listing is authoritative and also covers a duplicate member.
+# SAFETY: the recorded id can be stale (reboot, manual surgery); the
+# dispatcher's own listing is authoritative and also covers a duplicate
+# member.
 live=$(ng_prog_ids)
 ids=$(printf '%s\n%s\n' "$ids" "$live" | sort -un | grep -v '^$' || true)
 
@@ -25,7 +26,7 @@ for id in $ids; do
     if xdp-loader unload "$IFACE" -i "$id" 2>/dev/null; then
         ng_log "unloaded nodeguard prog id $id from $IFACE"
     else
-        # Only fail if the id is still live in the dispatcher.
+        # SAFETY: only fail if the id is still live in the dispatcher.
         if ng_prog_ids | grep -qx "$id"; then
             ng_log "failed to unload prog id $id from $IFACE" err
             rc=1

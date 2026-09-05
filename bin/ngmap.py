@@ -3,7 +3,8 @@
 pinned BPF maps. Every CLI (nodeguard-block, -list, -sweep, ...) shells into
 this file so the LPM key layout exists in exactly one tested implementation.
 
-Key layout (matches src/nodeguard_kern.c, x86_64):
+INVARIANT: key layout matches src/nodeguard_kern.c, x86_64. Dependents:
+src/nodeguard_kern.c structs, nodeguard-maps.spec.
   lpm_v4_key: u32 prefixlen (little-endian) + 4 addr bytes (network order)
   lpm_v6_key: u32 prefixlen (little-endian) + 16 addr bytes (network order)
   block value: u64 expiry_ns (CLOCK_MONOTONIC, 0 = permanent) + u64 hits, LE
@@ -31,7 +32,9 @@ STAT_NAMES = [
     "pass_allowlist", "pass_wgport", "pass_nonip", "pass_parsefail",
 ]
 
-# Addresses that must never be blockable regardless of allow-map contents.
+# INVARIANT: addresses that must never be blockable regardless of
+# allow-map contents; enforced by is_protected() for every block and
+# allow-check call in this file.
 NEVER_BLOCK = [ipaddress.ip_network(n) for n in (
     "0.0.0.0/8", "127.0.0.0/8", "10.0.0.0/8", "172.16.0.0/12",
     "192.168.0.0/16", "100.64.0.0/10", "169.254.0.0/16", "224.0.0.0/4",
@@ -263,11 +266,11 @@ def cmd_sweep(_a):
     n = 0
     for ver in (4, 6):
         path = f"{PIN}/block{ver}"
-        # Two race directions: a snapshot entry may vanish (ENOENT is
-        # tolerated) and a snapshot key may be re-blocked after the
-        # snapshot. Each candidate is therefore re-looked-up under the
-        # same lock cmd_block writes with, and deleted only if it is
-        # still expired against the sweep-start clock. On any other
+        # SAFETY: two race directions guarded here - a snapshot entry may
+        # vanish (ENOENT is tolerated) and a snapshot key may be re-blocked
+        # after the snapshot. Each candidate is therefore re-looked-up
+        # under the same lock cmd_block writes with, and deleted only if
+        # it is still expired against the sweep-start clock. On any other
         # lookup error the delete is skipped: leaving a corpse is
         # harmless, deleting a fresh block is not.
         for k, v in list(dump_map(path)):
@@ -318,8 +321,10 @@ def cmd_set_config(a):
 
 
 def cmd_allow_check(a):
-    # Exit 0 = protected, 1 = blockable, 3 = could not determine (callers
-    # must fail toward NOT blocking on 3).
+    # INVARIANT: exit 0 = protected, 1 = blockable, 3 = could not
+    # determine (callers must fail toward NOT blocking on 3). No in-repo
+    # caller today (the responder consumes allow-dump instead); the
+    # contract stands for operator scripting and future callers.
     try:
         reason = is_protected(a.target, allow_entries_live())
     except (RuntimeError, OSError, ValueError) as e:
@@ -374,8 +379,9 @@ def cmd_create_maps(a):
                 f"lost; allowlist is rebuilt).", code=2)
         print(f"VERIFIED {name}")
     if "config" in created:
-        # Only a brand-new config map gets kill switch 0. An existing value
-        # is preserved so a maps restart can never silently re-arm.
+        # SAFETY: only a brand-new config map gets kill switch 0; an
+        # existing value is preserved so a maps restart can never
+        # silently re-arm.
         update_map(f"{PIN}/config", struct.pack("<I", 1), struct.pack("<Q", 0))
         print("INITIALIZED config kill_switch=0")
 

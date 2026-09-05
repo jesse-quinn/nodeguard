@@ -7,8 +7,8 @@ set -uo pipefail
 ng_env
 mkdir -p "$NG_RUN"
 
-# Every pre-existing member must pass the map-identity check; a member
-# enforcing orphaned maps is unloaded, never blessed.
+# SAFETY: every pre-existing member must pass the map-identity check; a
+# member enforcing orphaned maps is unloaded, never blessed.
 existing=$(ng_prog_ids) || existing=""
 verified=""
 for id in $existing; do
@@ -39,8 +39,8 @@ if [ -z "$prog_id" ]; then
     exit 1
 fi
 
-# Map identity check: a divergence means the program is enforcing against
-# maps nobody manages: unload and fail.
+# SAFETY: map identity check - a divergence means the program is
+# enforcing against maps nobody manages: unload and fail.
 if ! ng_verify_map_identity "$prog_id"; then
     if ! xdp-loader unload "$IFACE" -i "$prog_id"; then
         ng_log "cleanup unload of prog $prog_id FAILED after identity mismatch; manual unload required" crit

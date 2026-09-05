@@ -16,7 +16,11 @@ Parameter file (JSON, lives in the host's config directory):
   "ring_size": 32768,
   "management_cpus": [1],
   "worker_cpus": ["4-7"],
-  "bpf_filter": null            // or e.g. "not (udp and port 41641)"
+  "bpf_filter": null,           // or e.g. "not (udp and port 41641)"
+  "cluster_id": 99              // optional; MUST differ from any other
+                                // af-packet capture on the same NIC, or
+                                // the kernel fanout group splits flows
+                                // between the two captures
 }
 """
 
@@ -49,7 +53,7 @@ def main():
     afp = {
         "interface": h["iface"],
         "threads": h["threads"],
-        "cluster-id": 99,
+        "cluster-id": h.get("cluster_id", 99),
         "cluster-type": "cluster_flow",
         "defrag": True,
         "tpacket-v3": True,

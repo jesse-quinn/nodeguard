@@ -1,10 +1,13 @@
 #!/bin/bash
 # nodeguard-canary: node-3's self-recovering first attach. Run DETACHED:
 #   sudo systemd-run --unit ng-canary --collect /bin/bash /usr/local/sbin/nodeguard-canary
-# Starts nodeguard-xdp, self-checks with patience, writes its verdict early,
-# and waits up to 600 s for /run/nodeguard/confirmed (touched by the operator
-# over ssh). On timeout it stops nodeguard-xdp: physical presence never
-# required. At most ONE automatic retry; a second failure needs a human.
+# SAFETY: writes its verdict to $RESULT before any rollback action, so an
+# operator checking after a crash or a stop always finds an answer rather
+# than a stale or missing file. Starts nodeguard-xdp, self-checks with
+# patience, and waits up to 600 s for /run/nodeguard/confirmed (touched by
+# the operator over ssh). On timeout it stops nodeguard-xdp: physical
+# presence never required. At most ONE automatic retry; a second failure
+# needs a human.
 set -uo pipefail
 . /usr/local/lib/nodeguard/nodeguard-lib.sh
 ng_env

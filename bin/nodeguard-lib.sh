@@ -24,9 +24,11 @@ ng_cfg_get() { python3 "$NG_MAP" get-config "$1"; }
 ng_cfg_set() { python3 "$NG_MAP" set-config "$1" "$2"; }
 
 # Program ids of nodeguard members currently in this interface's dispatcher.
-# Three-valued: prints ids and returns 0 when the dispatcher was read;
-# prints NOTHING and returns nonzero when xdp-loader itself failed, which
-# callers must treat as UNKNOWN, never as detached.
+# INVARIANT: three-valued contract - prints ids and returns 0 when the
+# dispatcher was read; prints NOTHING and returns nonzero when xdp-loader
+# itself failed, which callers must treat as UNKNOWN, never as detached.
+# Dependents: nodeguard-watchdog, nodeguard-status, nodeguard-attach,
+# nodeguard-detach, nodeguard-reload.
 ng_prog_ids() {
     local out rc
     out=$(xdp-loader status "$IFACE" 2>&1)

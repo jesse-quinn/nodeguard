@@ -1,7 +1,8 @@
 #!/bin/bash
 # nodeguard-watchdog: one cycle, run every minute by nodeguard-watchdog.timer.
-# Lifeline probes (allowlisted paths) detect datapath death; the canary probe
-# (a deliberately NON-allowlisted TCP/443 target) detects over-blocking.
+# SAFETY: lifeline probes (allowlisted paths) detect datapath death; the
+# canary probe (a deliberately NON-allowlisted TCP/443 target) detects
+# over-blocking.
 # Latch semantics per docs/design.md.
 set -uo pipefail
 . /usr/local/lib/nodeguard/nodeguard-lib.sh
@@ -28,8 +29,9 @@ remind_hourly() {
     fi
 }
 
-# Soft-off that never lies: if the kill-switch write fails, escalate
-# straight to the fail-open action the soft-off could not deliver.
+# SAFETY: soft-off that never lies - if the kill-switch write fails,
+# escalate straight to the fail-open action the soft-off could not
+# deliver.
 soft_off_or_detach() {
     local why="$1"
     if /usr/local/sbin/nodeguard-off --watchdog; then
@@ -76,8 +78,9 @@ sys.exit(0 if d.get("Self", {}).get("Online") else 1)
 ' 2>/dev/null
 }
 probe_officegw() {
-    # Fails when OFFICE_GW is unset: the conservative, fail-open-blocking
-    # direction (a misconfigured host never auto re-arms).
+    # SAFETY: fails when OFFICE_GW is unset - the conservative,
+    # fail-open-blocking direction (a misconfigured host never auto
+    # re-arms).
     [ -n "${OFFICE_GW:-}" ] && ping -c1 -W2 "$OFFICE_GW" >/dev/null 2>&1
 }
 probe_canary() {
@@ -120,18 +123,21 @@ if [ "$attach_state" = "detached" ]; then
     set_counter canary_fail 0
     set_counter lifeline_fail 0
     set_counter clean 0
-    # A latch with the datapath already detached still deserves its
-    # hourly reminder; auto re-arm stays out of this branch (re-arming
-    # config[1] while detached would silently arm the next attach).
+    # INVARIANT: a latch with the datapath already detached still
+    # deserves its hourly reminder; auto re-arm stays out of this branch
+    # (re-arming config[1] while detached would silently arm the next
+    # attach). The re-arm check further down depends on these counters
+    # and on config[2] being left untouched here.
     if [ "$ks" != "0" ]; then
         remind_hourly "watchdog: enforcement is OFF and XDP is DETACHED (latched: $(latched_by)); systemctl start nodeguard-xdp then nodeguard-on to recover"
     fi
     exit 0
 fi
 if [ "$attach_state" = "unknown" ]; then
-    # xdp-loader itself failed; the program may still be enforcing, and
-    # nodeguard-off works through the pinned maps regardless. Fall through
-    # with counters live: a spurious soft-off fails open and loud.
+    # SAFETY: xdp-loader itself failed; the program may still be
+    # enforcing, and nodeguard-off works through the pinned maps
+    # regardless. Fall through with counters live: a spurious soft-off
+    # fails open and loud.
     set_counter toolfail $(( $(counter toolfail) + 1 ))
     lvl=err
     [ "$(counter toolfail)" -ge 3 ] && lvl=crit
@@ -185,7 +191,8 @@ else
             # Counter left >= 10 so the detach retries every cycle.
         fi
     fi
-    # Bounded auto re-arm: watchdog-set latches only, once per boot.
+    # SAFETY: bounded auto re-arm - watchdog-set latches only, once per
+    # boot.
     if [ -f "$NG_RUN/watchdog_off" ] && [ ! -f "$NG_RUN/manual_off" ] \
         && [ "$(counter clean)" -ge 15 ] && [ "$(ng_cfg_get 2)" = "0" ]; then
         if /usr/local/sbin/nodeguard-on; then

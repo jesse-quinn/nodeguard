@@ -30,8 +30,9 @@ nodeguard-off)
     mkdir -p "$NG_RUN"
     marker="$NG_RUN/manual_off"
     [ "${1:-}" = "--watchdog" ] && marker="$NG_RUN/watchdog_off"
-    # Verify by read-back: claiming soft-off while enforcement continues
-    # would be the one fail-closed lie this tool must never tell.
+    # SAFETY: verify by read-back - claiming soft-off while enforcement
+    # continues would be the one fail-closed lie this tool must never
+    # tell.
     v=""
     if ng_cfg_set 1 1; then
         v=$(ng_cfg_get 1 2>/dev/null || true)

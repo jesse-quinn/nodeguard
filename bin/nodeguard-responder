@@ -4,6 +4,9 @@
 Tails eve.json and, for alerts that pass EVERY gate below, inserts the
 offender source address into the pinned block map via nodeguard-block:
 
+INVARIANT: the seven gates below, and their order, are a contract with
+main()'s per-event handling further down this file; adding, removing, or
+reordering a gate must update both.
   1. event_type == alert
   2. severity 1, or SID opted in via sids.conf ("block <sid>")
   3. SID not denied ("ignore <sid>")
@@ -109,9 +112,9 @@ def load_sids(path):
 
 
 class AllowCache:
-    """Snapshot of the live allow maps, refreshed on a short TTL. The
-    kernel allow map is the backstop; an unreadable cache fails toward
-    NOT blocking."""
+    """Snapshot of the live allow maps, refreshed on a short TTL.
+    SAFETY: the kernel allow map is the backstop; an unreadable cache
+    fails toward NOT blocking."""
 
     def __init__(self):
         self.nets = None
@@ -141,9 +144,12 @@ class AllowCache:
 
 
 class Journal:
-    """Per-IP offense history. count = completed block windows (drives the
-    TTL exponent); shadow_hits = dry-run sightings; blocked_until = wall
-    clock end of the current (real or shadow) window."""
+    """Per-IP offense history.
+    SAFETY: count increments only on a completed block window (drives the
+    TTL exponent), and shadow_hits only on a non-offense observation
+    (dry-run sighting, rate-capped repeat); conflating the two would
+    escalate TTL on mere observations. blocked_until = wall clock end of
+    the current (real or shadow) window."""
 
     def __init__(self, path):
         self.path = path
@@ -211,11 +217,11 @@ class Journal:
 
 
 def follow(path):
-    """tail -F: follow across rotation. Seeks to END only on the FIRST
-    open (a daemon restart never replays); every reopen after a rotation
-    or truncation starts at offset 0, and the old fd is drained to EOF
-    first so lines appended between the last read and the rotation check
-    are not lost."""
+    """tail -F: follow across rotation.
+    SAFETY: seeks to END only on the FIRST open (a daemon restart never
+    replays); every reopen after a rotation or truncation starts at
+    offset 0, and the old fd is drained to EOF first so lines appended
+    between the last read and the rotation check are not lost."""
     f = None
     inode = None
     first_open = True
@@ -322,7 +328,9 @@ def main():
             tag = (f"sid={sid} sev={sev} src={src} dst={dst} "
                    f"proto={proto} sig={sig!r}")
 
-            # anti-spoofing gate
+            # SAFETY: anti-spoofing gate - blocks require evidence of a
+            # real flow (TCP bidirectional, or UDP/ICMP hand-promoted via
+            # sids.conf); a single spoofed packet cannot trigger a block.
             if proto != "TCP" and sid not in udp_ok:
                 log(f"WOULD BLOCK ({proto.lower() or 'unknown'}, "
                     f"not eligible): {tag}")

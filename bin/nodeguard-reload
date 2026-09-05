@@ -1,7 +1,9 @@
 #!/bin/bash
-# nodeguard-reload: hitless object update. Loads the new object as an
-# additional dispatcher member against the same pin root, verifies map
-# identity, then unloads the OLD program by id.
+# nodeguard-reload: hitless object update.
+# SAFETY: loads the new object as an additional dispatcher member against
+# the same pin root, verifies map identity, and only then unloads the OLD
+# program by id - the old member keeps enforcing until the new one is
+# confirmed good.
 # systemctl restart nodeguard-xdp is a full detach/reattach (ixgbe link
 # blips) and is the wrong tool for deploying a patched object.
 set -uo pipefail

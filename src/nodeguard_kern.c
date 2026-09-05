@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: GPL-2.0
 // nodeguard: XDP blocklist firewall fed by a passive Suricata IDS.
 //
-// Contract (see design.md section 2): every failure path returns XDP_PASS.
+// SAFETY: every failure path returns XDP_PASS (see design.md section 2).
 // The ONLY drop is an unexpired blocklist hit on a source address that did
 // not match the allowlist, the WireGuard port pass, or the kill switch.
 //
-// Map parameters here are the single source of truth; nodeguard-maps.spec is
-// generated from this object at build time and nodeguard-maps.service creates
-// or verifies pins only from that spec.
+// INVARIANT: map parameters here are the single source of truth. Dependents:
+// nodeguard-maps.spec (generated from this object at build time) and
+// nodeguard-maps.service (creates or verifies pins only from that spec).
 
 #include <linux/bpf.h>
 #include <linux/if_ether.h>
@@ -37,7 +37,7 @@ struct lpm_v6_key {
 };
 
 struct block_val {
-	__u64 expiry_ns; // CLOCK_MONOTONIC ns; 0 = permanent (manual entries only)
+	__u64 expiry_ns; // INVARIANT: CLOCK_MONOTONIC ns; 0 = permanent (manual entries only)
 	__u64 hits;
 };
 
@@ -141,11 +141,13 @@ static __always_inline int handle_v4(void *nh, void *data_end, __u64 wg_port)
 		return XDP_PASS;
 	}
 
-	// Non-first fragments carry payload where the UDP header would be, so
-	// the port read is attempted only at fragment offset zero. A truncated
-	// UDP header or a non-first fragment cannot match the WireGuard port
-	// and falls through to the lookups (it is not a parse failure of the
-	// packet as a whole).
+	// SAFETY: the port read is attempted only at fragment offset zero;
+	// non-first fragments carry payload where the UDP header would be.
+	// RESIDUAL: a truncated UDP header or a non-first fragment cannot
+	// match the WireGuard port and falls through to the block/allow
+	// lookups instead of the WG-port pass (it is not a parse failure of
+	// the packet as a whole); a blocked source's non-first WireGuard
+	// fragments are dropped by this path rather than passed.
 	if (ip->protocol == IPPROTO_UDP && wg_port &&
 	    (ip->frag_off & NG_IPV4_FRAG_OFFSET_MASK) == 0) {
 		__u32 ihl = ip->ihl * 4;
@@ -153,9 +155,9 @@ static __always_inline int handle_v4(void *nh, void *data_end, __u64 wg_port)
 		if (ihl >= sizeof(*ip)) {
 			struct udphdr *udp = nh + ihl;
 
-			// wg_port is validated to 1-65535 at the write
-			// boundary (ngmap.py set-config); the cast documents
-			// the width, it does not sanitize.
+			// INVARIANT: wg_port is validated to 1-65535 at the
+			// write boundary (ngmap.py set-config); the cast
+			// documents the width, it does not sanitize.
 			if ((void *)(udp + 1) <= data_end &&
 			    bpf_ntohs(udp->dest) == (__u16)wg_port) {
 				count(ST_PASS_WGPORT);
