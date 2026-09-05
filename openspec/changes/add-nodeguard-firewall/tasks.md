@@ -51,17 +51,17 @@
       drift items) before any attach
 - [x] 4.2 Enable the maps service; verify pins, reconciliation, and the
       WireGuard port value
-- [ ] 4.3 First attach on the internet gateway in a scheduled window with a
+- [x] 4.3 First attach on the internet gateway in a scheduled window with a
       dead-man abort; verify link, dispatcher membership, map identity,
       and the management path
-- [ ] 4.4 Verify the hitless reload path causes no carrier loss before
+- [x] 4.4 Verify the hitless reload path causes no carrier loss before
       calling it hitless anywhere
-- [ ] 4.5 Functional drop test with real routable traffic: block a test
+- [x] 4.5 Functional drop test with real routable traffic: block a test
       source, prove the drop with xdpdump and counters, prove in-kernel
       expiry and sweep collection
 - [ ] 4.6 Attach on the remote node via the self-recovering canary wrapper;
       run its return-traffic drop test against its own pin set
-- [ ] 4.7 Enable the sweep and watchdog timers
+- [x] 4.7 Enable the sweep and watchdog timers
 - [ ] 4.8 Exit gate alarm drill: prove the kill-switch and attach-state
       alarms fire on deliberate trips before any enforcement
 
