@@ -1,0 +1,2407 @@
+{
+ "zabbix_export": {
+  "version": "7.4",
+  "template_groups": [
+   {
+    "uuid": "172269568760415a96aa3606c64ebd41",
+    "name": "Templates/Nodeguard"
+   }
+  ],
+  "templates": [
+   {
+    "uuid": "1d24a75919ad49d2ae4a70c70b90442d",
+    "template": "Nodeguard by Zabbix agent",
+    "name": "Nodeguard by Zabbix agent",
+    "description": "nodeguard XDP firewall + Suricata IPS monitoring. Requires the nodeguard.kv UserParameter and sudoers rule from the nodeguard repo (etc/).",
+    "groups": [
+     {
+      "name": "Templates/Nodeguard"
+     }
+    ],
+    "items": [
+     {
+      "uuid": "8d39d90f2df058c68bd3c4ba713e295b",
+      "name": "nodeguard kv raw",
+      "key": "nodeguard.kv.raw",
+      "delay": "1m",
+      "value_type": "TEXT",
+      "description": "Master item: the whole nodeguard kv export in one agent poll. Every other item is dependent on it. Short history retention aids torn-parse debugging.",
+      "history": "1d",
+      "trends": "0"
+     },
+     {
+      "uuid": "27fc0f9ce89b47bfbc7c2cd93a00481a",
+      "name": "nodeguard attach state",
+      "type": "DEPENDENT",
+      "key": "nodeguard.kv[attach_state]",
+      "delay": "0",
+      "value_type": "TEXT",
+      "description": "attached, detached, or unknown (xdp-loader itself failed; the program may still be enforcing)",
+      "history": "31d",
+      "trends": "0",
+      "master_item": {
+       "key": "nodeguard.kv.raw"
+      },
+      "preprocessing": [
+       {
+        "type": "REGEX",
+        "parameters": [
+         "(?m)^ng\\.attach_state=(.+)$",
+         "\\1"
+        ]
+       }
+      ],
+      "triggers": [
+       {
+        "uuid": "dc15558415c94ea2a6814fe34f79bd2e",
+        "name": "nodeguard XDP is not attached on {HOST.NAME}",
+        "expression": "last(/Nodeguard by Zabbix agent/nodeguard.kv[attach_state])<>\"attached\"",
+        "priority": "WARNING",
+        "description": "detached = fail open (no enforcement); unknown = xdp-loader broken, state unverifiable"
+       },
+       {
+        "uuid": "1ac3b673c37d4ec99d48f3310410755a",
+        "name": "nodeguard telemetry stale on {HOST.NAME}",
+        "expression": "nodata(/Nodeguard by Zabbix agent/nodeguard.kv[attach_state],10m)=1",
+        "priority": "WARNING",
+        "description": "The watchdog export or the agent path is dead; nodeguard state unknown to monitoring."
+       }
+      ]
+     },
+     {
+      "uuid": "b0ad7e3ea47d4bf78e18e89e7b59a90f",
+      "name": "nodeguard kill switch",
+      "type": "DEPENDENT",
+      "key": "nodeguard.kv[killswitch]",
+      "delay": "0",
+      "value_type": "UNSIGNED",
+      "description": "nonzero = enforcement soft-off (latched)",
+      "history": "31d",
+      "trends": "180d",
+      "master_item": {
+       "key": "nodeguard.kv.raw"
+      },
+      "preprocessing": [
+       {
+        "type": "REGEX",
+        "parameters": [
+         "(?m)^ng\\.killswitch=(.+)$",
+         "\\1"
+        ]
+       }
+      ],
+      "triggers": [
+       {
+        "uuid": "baa727885282476a9d2a73dbed541e03",
+        "name": "nodeguard enforcement latched OFF on {HOST.NAME}",
+        "expression": "last(/Nodeguard by Zabbix agent/nodeguard.kv[killswitch])=1",
+        "priority": "HIGH",
+        "description": "nodeguard-on to re-arm after diagnosing; check ng.latch for manual vs watchdog"
+       }
+      ]
+     },
+     {
+      "uuid": "35584dd9e3254dcc9b269009dba2698e",
+      "name": "nodeguard latch owner",
+      "type": "DEPENDENT",
+      "key": "nodeguard.kv[latch]",
+      "delay": "0",
+      "value_type": "TEXT",
+      "description": "manual, watchdog, or none",
+      "history": "31d",
+      "trends": "0",
+      "master_item": {
+       "key": "nodeguard.kv.raw"
+      },
+      "preprocessing": [
+       {
+        "type": "REGEX",
+        "parameters": [
+         "(?m)^ng\\.latch=(.+)$",
+         "\\1"
+        ]
+       }
+      ]
+     },
+     {
+      "uuid": "0b2ff396a09741ca873c4ea28c8aa083",
+      "name": "nodeguard active blocks",
+      "type": "DEPENDENT",
+      "key": "nodeguard.kv[blocks]",
+      "delay": "0",
+      "value_type": "UNSIGNED",
+      "description": "entries in the block maps",
+      "history": "31d",
+      "trends": "180d",
+      "master_item": {
+       "key": "nodeguard.kv.raw"
+      },
+      "preprocessing": [
+       {
+        "type": "REGEX",
+        "parameters": [
+         "(?m)^ng\\.blocks=(.+)$",
+         "\\1"
+        ]
+       }
+      ]
+     },
+     {
+      "uuid": "dea9962cfa254d6fb4a08717ae7ea3b0",
+      "name": "nodeguard wg port match",
+      "type": "DEPENDENT",
+      "key": "nodeguard.kv[port_match]",
+      "delay": "0",
+      "value_type": "UNSIGNED",
+      "description": "1 = config[0] equals tailscaled's live port",
+      "history": "31d",
+      "trends": "180d",
+      "master_item": {
+       "key": "nodeguard.kv.raw"
+      },
+      "preprocessing": [
+       {
+        "type": "REGEX",
+        "parameters": [
+         "(?m)^ng\\.port_match=(.+)$",
+         "\\1"
+        ]
+       }
+      ],
+      "triggers": [
+       {
+        "uuid": "7b1751b50ea8485cb8722381cc9688b8",
+        "name": "nodeguard WireGuard port drift on {HOST.NAME}",
+        "expression": "last(/Nodeguard by Zabbix agent/nodeguard.kv[port_match])=0",
+        "priority": "WARNING",
+        "description": "watchdog rewrites within a minute; persistent drift means the watchdog timer is dead"
+       }
+      ]
+     },
+     {
+      "uuid": "83cc11dc212042a4938ea93689601598",
+      "name": "suricata unit state",
+      "type": "DEPENDENT",
+      "key": "nodeguard.kv[suricata]",
+      "delay": "0",
+      "value_type": "TEXT",
+      "description": "systemd is-active for suricata",
+      "history": "31d",
+      "trends": "0",
+      "master_item": {
+       "key": "nodeguard.kv.raw"
+      },
+      "preprocessing": [
+       {
+        "type": "REGEX",
+        "parameters": [
+         "(?m)^ng\\.suricata=(.+)$",
+         "\\1"
+        ]
+       }
+      ],
+      "triggers": [
+       {
+        "uuid": "f744a031051b45a1946d44d907d21442",
+        "name": "suricata is not active on {HOST.NAME}",
+        "expression": "last(/Nodeguard by Zabbix agent/nodeguard.kv[suricata])<>\"active\"",
+        "priority": "WARNING",
+        "description": "detection blind while down; zero traffic impact by design"
+       }
+      ]
+     },
+     {
+      "uuid": "3d5b807b589e4e0da238694cba2dacae",
+      "name": "nodeguard responder unit state",
+      "type": "DEPENDENT",
+      "key": "nodeguard.kv[responder]",
+      "delay": "0",
+      "value_type": "TEXT",
+      "description": "systemd is-active for nodeguard-responder",
+      "history": "31d",
+      "trends": "0",
+      "master_item": {
+       "key": "nodeguard.kv.raw"
+      },
+      "preprocessing": [
+       {
+        "type": "REGEX",
+        "parameters": [
+         "(?m)^ng\\.responder=(.+)$",
+         "\\1"
+        ]
+       }
+      ],
+      "triggers": [
+       {
+        "uuid": "736dc0325b7c4a6e9ee94450fd075e25",
+        "name": "nodeguard responder is not active on {HOST.NAME}",
+        "expression": "last(/Nodeguard by Zabbix agent/nodeguard.kv[responder])<>\"active\"",
+        "priority": "WARNING",
+        "description": "no NEW blocks while down; existing blocks expire in-kernel"
+       }
+      ]
+     },
+     {
+      "uuid": "10ca8fa20c3a4842b916aa3a0a15c235",
+      "name": "suricata kernel drops",
+      "type": "DEPENDENT",
+      "key": "nodeguard.kv[kernel_drops]",
+      "delay": "0",
+      "value_type": "UNSIGNED",
+      "description": "cumulative af-packet kernel_drops across capture threads",
+      "history": "31d",
+      "trends": "180d",
+      "master_item": {
+       "key": "nodeguard.kv.raw"
+      },
+      "preprocessing": [
+       {
+        "type": "REGEX",
+        "parameters": [
+         "(?m)^ng\\.kernel_drops=(.+)$",
+         "\\1"
+        ]
+       }
+      ],
+      "triggers": [
+       {
+        "uuid": "96de099ed5554770b8248aab8852cda2",
+        "name": "suricata capture is dropping packets on {HOST.NAME}",
+        "expression": "last(/Nodeguard by Zabbix agent/nodeguard.kv[kernel_drops])-last(/Nodeguard by Zabbix agent/nodeguard.kv[kernel_drops],#5)>50000",
+        "priority": "WARNING",
+        "description": "ring saturated; reduced detection coverage. Raise ring-size or trim the ruleset"
+       }
+      ]
+     },
+     {
+      "uuid": "437876d8f9574472a1a1516fbce12286",
+      "name": "nodeguard XDP drop rate v4",
+      "type": "DEPENDENT",
+      "key": "nodeguard.kv[drop_v4]",
+      "delay": "0",
+      "value_type": "FLOAT",
+      "units": "pps",
+      "description": "blocked packets per second (in-kernel drops of blocklisted sources)",
+      "history": "31d",
+      "trends": "180d",
+      "master_item": {
+       "key": "nodeguard.kv.raw"
+      },
+      "preprocessing": [
+       {
+        "type": "REGEX",
+        "parameters": [
+         "(?m)^ng\\.drop_v4=(.+)$",
+         "\\1"
+        ]
+       },
+       {
+        "type": "CHANGE_PER_SECOND",
+        "parameters": [
+         ""
+        ]
+       }
+      ],
+      "triggers": [
+       {
+        "uuid": "9e88e2d275055106b6060862edfe410b",
+        "name": "nodeguard v4 drop rate above weekly baseline on {HOST.NAME}",
+        "expression": "baselinedev(/Nodeguard by Zabbix agent/nodeguard.kv[drop_v4],1h:now/h,\"d\",10)>3 and last(/Nodeguard by Zabbix agent/nodeguard.kv[drop_v4])>10",
+        "priority": "INFO",
+        "description": "Seasonal baseline deviation with an absolute floor (baselinedev explodes on near-zero baselines). Imported at Information severity; promoted only after 14 days of reviewed-quiet trend rows."
+       }
+      ]
+     },
+     {
+      "uuid": "0f5a088abe0a43d7b36d1db48dcfd787",
+      "name": "nodeguard XDP drop rate v6",
+      "type": "DEPENDENT",
+      "key": "nodeguard.kv[drop_v6]",
+      "delay": "0",
+      "value_type": "FLOAT",
+      "units": "pps",
+      "description": "IPv6 drops per second",
+      "history": "31d",
+      "trends": "180d",
+      "master_item": {
+       "key": "nodeguard.kv.raw"
+      },
+      "preprocessing": [
+       {
+        "type": "REGEX",
+        "parameters": [
+         "(?m)^ng\\.drop_v6=(.+)$",
+         "\\1"
+        ]
+       },
+       {
+        "type": "CHANGE_PER_SECOND",
+        "parameters": [
+         ""
+        ]
+       }
+      ],
+      "triggers": [
+       {
+        "uuid": "792ba19e783c503697037f9517d7b483",
+        "name": "nodeguard v6 drop rate above weekly baseline on {HOST.NAME}",
+        "expression": "baselinedev(/Nodeguard by Zabbix agent/nodeguard.kv[drop_v6],1h:now/h,\"d\",10)>3 and last(/Nodeguard by Zabbix agent/nodeguard.kv[drop_v6])>10",
+        "priority": "INFO",
+        "description": "Seasonal baseline deviation with an absolute floor (baselinedev explodes on near-zero baselines). Imported at Information severity; promoted only after 14 days of reviewed-quiet trend rows."
+       }
+      ]
+     },
+     {
+      "uuid": "b0f9fd5defee472d86c28f3a65c73b99",
+      "name": "nodeguard XDP pass rate",
+      "type": "DEPENDENT",
+      "key": "nodeguard.kv[pass]",
+      "delay": "0",
+      "value_type": "FLOAT",
+      "units": "pps",
+      "description": "default-pass packets per second",
+      "history": "31d",
+      "trends": "180d",
+      "master_item": {
+       "key": "nodeguard.kv.raw"
+      },
+      "preprocessing": [
+       {
+        "type": "REGEX",
+        "parameters": [
+         "(?m)^ng\\.pass=(.+)$",
+         "\\1"
+        ]
+       },
+       {
+        "type": "CHANGE_PER_SECOND",
+        "parameters": [
+         ""
+        ]
+       }
+      ]
+     },
+     {
+      "uuid": "0e0e765f13a14f428ed92d9593c6c99c",
+      "name": "nodeguard allowlist pass rate",
+      "type": "DEPENDENT",
+      "key": "nodeguard.kv[pass_allowlist]",
+      "delay": "0",
+      "value_type": "FLOAT",
+      "units": "pps",
+      "description": "allowlist hits per second",
+      "history": "31d",
+      "trends": "180d",
+      "master_item": {
+       "key": "nodeguard.kv.raw"
+      },
+      "preprocessing": [
+       {
+        "type": "REGEX",
+        "parameters": [
+         "(?m)^ng\\.pass_allowlist=(.+)$",
+         "\\1"
+        ]
+       },
+       {
+        "type": "CHANGE_PER_SECOND",
+        "parameters": [
+         ""
+        ]
+       }
+      ]
+     },
+     {
+      "uuid": "507b60b7b0e74cd5a90e8660799c3829",
+      "name": "nodeguard WireGuard pass rate",
+      "type": "DEPENDENT",
+      "key": "nodeguard.kv[pass_wgport]",
+      "delay": "0",
+      "value_type": "FLOAT",
+      "units": "pps",
+      "description": "WireGuard port passes per second",
+      "history": "31d",
+      "trends": "180d",
+      "master_item": {
+       "key": "nodeguard.kv.raw"
+      },
+      "preprocessing": [
+       {
+        "type": "REGEX",
+        "parameters": [
+         "(?m)^ng\\.pass_wgport=(.+)$",
+         "\\1"
+        ]
+       },
+       {
+        "type": "CHANGE_PER_SECOND",
+        "parameters": [
+         ""
+        ]
+       }
+      ]
+     },
+     {
+      "uuid": "469db10dc9f74a2dabb71ce687073df6",
+      "name": "feeds enforce",
+      "type": "DEPENDENT",
+      "key": "nodeguard.kv[feeds_enforce]",
+      "delay": "0",
+      "value_type": "UNSIGNED",
+      "description": "1 = FEEDS_ENFORCE=yes in the deployed config",
+      "history": "31d",
+      "trends": "180d",
+      "master_item": {
+       "key": "nodeguard.kv.raw"
+      },
+      "preprocessing": [
+       {
+        "type": "REGEX",
+        "parameters": [
+         "(?m)^ng\\.feeds_enforce=(.+)$",
+         "\\1"
+        ]
+       }
+      ]
+     },
+     {
+      "uuid": "42aee36625a94b28b330dcd298a3d95c",
+      "name": "feeds approved count",
+      "type": "DEPENDENT",
+      "key": "nodeguard.kv[feeds_approved]",
+      "delay": "0",
+      "value_type": "UNSIGNED",
+      "description": "feeds recorded in approved.json",
+      "history": "31d",
+      "trends": "180d",
+      "master_item": {
+       "key": "nodeguard.kv.raw"
+      },
+      "preprocessing": [
+       {
+        "type": "REGEX",
+        "parameters": [
+         "(?m)^ng\\.feeds_approved=(.+)$",
+         "\\1"
+        ]
+       }
+      ]
+     },
+     {
+      "uuid": "a908e061103b4b74aefcdff9d04c31d6",
+      "name": "feeds config/approval mismatch",
+      "type": "DEPENDENT",
+      "key": "nodeguard.kv[feeds_config_approved_mismatch]",
+      "delay": "0",
+      "value_type": "UNSIGNED",
+      "description": "1 = approvals exist but the deployed config does not enforce them (deploy-reverted config tripwire)",
+      "history": "31d",
+      "trends": "180d",
+      "master_item": {
+       "key": "nodeguard.kv.raw"
+      },
+      "preprocessing": [
+       {
+        "type": "REGEX",
+        "parameters": [
+         "(?m)^ng\\.feeds_config_approved_mismatch=(.+)$",
+         "\\1"
+        ]
+       }
+      ],
+      "triggers": [
+       {
+        "uuid": "c398edcef83346ae8c741bdf4dd7b732",
+        "name": "nodeguard feeds config/approval mismatch on {HOST.NAME}",
+        "expression": "min(/Nodeguard by Zabbix agent/nodeguard.kv[feeds_config_approved_mismatch],13h)>0",
+        "priority": "WARNING",
+        "description": "A deploy likely reverted a live config edit; enforcement is decaying open. Re-align hosts/<host>/feeds.conf and redeploy."
+       }
+      ]
+     },
+     {
+      "uuid": "9aff37180cd040618aa02910456246c7",
+      "name": "feeds journal reset",
+      "type": "DEPENDENT",
+      "key": "nodeguard.kv[feeds_journal_reset]",
+      "delay": "0",
+      "value_type": "UNSIGNED",
+      "description": "1 = state.json was lost and rebuilt insert-only this run",
+      "history": "31d",
+      "trends": "180d",
+      "master_item": {
+       "key": "nodeguard.kv.raw"
+      },
+      "preprocessing": [
+       {
+        "type": "REGEX",
+        "parameters": [
+         "(?m)^ng\\.feeds_journal_reset=(.+)$",
+         "\\1"
+        ]
+       }
+      ]
+     },
+     {
+      "uuid": "fbaa9d9a311b44ea8fe4882ccb94819a",
+      "name": "feeds churn held",
+      "type": "DEPENDENT",
+      "key": "nodeguard.kv[feeds_churn_held]",
+      "delay": "0",
+      "value_type": "UNSIGNED",
+      "description": "1 = a feed's composition jumped past the churn brake",
+      "history": "31d",
+      "trends": "180d",
+      "master_item": {
+       "key": "nodeguard.kv.raw"
+      },
+      "preprocessing": [
+       {
+        "type": "REGEX",
+        "parameters": [
+         "(?m)^ng\\.feeds_churn_held=(.+)$",
+         "\\1"
+        ]
+       }
+      ],
+      "triggers": [
+       {
+        "uuid": "2e0f6893d93c4bdda8d5ae78973b9354",
+        "name": "nodeguard feed composition churn held on {HOST.NAME}",
+        "expression": "last(/Nodeguard by Zabbix agent/nodeguard.kv[feeds_churn_held])=1",
+        "priority": "WARNING",
+        "description": "Review last-diff.txt; accept with nodeguard-feeds apply --feed <id> --confirm."
+       }
+      ]
+     },
+     {
+      "uuid": "195961b83b74460ca92d8343e3c870a7",
+      "name": "feeds last run",
+      "type": "DEPENDENT",
+      "key": "nodeguard.kv[feeds_last_run_ts]",
+      "delay": "0",
+      "value_type": "UNSIGNED",
+      "description": "epoch of the last run",
+      "history": "31d",
+      "trends": "180d",
+      "master_item": {
+       "key": "nodeguard.kv.raw"
+      },
+      "preprocessing": [
+       {
+        "type": "REGEX",
+        "parameters": [
+         "(?m)^ng\\.feeds_last_run_ts=(.+)$",
+         "\\1"
+        ]
+       }
+      ],
+      "triggers": [
+       {
+        "uuid": "49a54004049b5112a9c513d52be051ff",
+        "name": "nodeguard feeds have never run on {HOST.NAME}",
+        "expression": "max(/Nodeguard by Zabbix agent/nodeguard.kv[feeds_last_run_ts],24h)=0",
+        "priority": "WARNING",
+        "description": "feeds_last_run_ts has been 0 for 24h: a wiped /var/lib/nodeguard or a disabled feeds timer. Deliberately not gated on last()>0 so the never-ran state cannot read healthy forever."
+       }
+      ]
+     },
+     {
+      "uuid": "e7bbedef3ce7403bb2c6575f010d8d66",
+      "name": "feeds owned entries",
+      "type": "DEPENDENT",
+      "key": "nodeguard.kv[feeds_entries]",
+      "delay": "0",
+      "value_type": "UNSIGNED",
+      "description": "journal-owned block entries",
+      "history": "31d",
+      "trends": "180d",
+      "master_item": {
+       "key": "nodeguard.kv.raw"
+      },
+      "preprocessing": [
+       {
+        "type": "REGEX",
+        "parameters": [
+         "(?m)^ng\\.feeds_entries=(.+)$",
+         "\\1"
+        ]
+       }
+      ]
+     },
+     {
+      "uuid": "36306bbc2f99414f91c6846dc898fd57",
+      "name": "feeds candidates",
+      "type": "DEPENDENT",
+      "key": "nodeguard.kv[feeds_candidates]",
+      "delay": "0",
+      "value_type": "UNSIGNED",
+      "description": "candidates seen this run",
+      "history": "31d",
+      "trends": "180d",
+      "master_item": {
+       "key": "nodeguard.kv.raw"
+      },
+      "preprocessing": [
+       {
+        "type": "REGEX",
+        "parameters": [
+         "(?m)^ng\\.feeds_candidates=(.+)$",
+         "\\1"
+        ]
+       }
+      ]
+     },
+     {
+      "uuid": "8228b4d8edaa458b9701d6577e1b905d",
+      "name": "feeds rejected",
+      "type": "DEPENDENT",
+      "key": "nodeguard.kv[feeds_rejected]",
+      "delay": "0",
+      "value_type": "UNSIGNED",
+      "description": "candidates dropped by protected/allow guards; nonzero is anomalous with bogon feeds excluded upstream",
+      "history": "31d",
+      "trends": "180d",
+      "master_item": {
+       "key": "nodeguard.kv.raw"
+      },
+      "preprocessing": [
+       {
+        "type": "REGEX",
+        "parameters": [
+         "(?m)^ng\\.feeds_rejected=(.+)$",
+         "\\1"
+        ]
+       }
+      ],
+      "triggers": [
+       {
+        "uuid": "85a1695d33784f44828c2b8ce2430f64",
+        "name": "nodeguard feed shipped protected ranges on {HOST.NAME}",
+        "expression": "min(/Nodeguard by Zabbix agent/nodeguard.kv[feeds_rejected],13h)>0",
+        "priority": "WARNING",
+        "description": "A curated feed is shipping protected or allowlisted ranges; review last-diff.txt."
+       }
+      ]
+     },
+     {
+      "uuid": "d2ea664360d44a0e8adce9eff807959f",
+      "name": "feeds failed count",
+      "type": "DEPENDENT",
+      "key": "nodeguard.kv[feeds_failed]",
+      "delay": "0",
+      "value_type": "UNSIGNED",
+      "description": "feeds FAILED this run (fetch, validation, staleness, canary)",
+      "history": "31d",
+      "trends": "180d",
+      "master_item": {
+       "key": "nodeguard.kv.raw"
+      },
+      "preprocessing": [
+       {
+        "type": "REGEX",
+        "parameters": [
+         "(?m)^ng\\.feeds_failed=(.+)$",
+         "\\1"
+        ]
+       }
+      ],
+      "triggers": [
+       {
+        "uuid": "b0feaec604ed4c6a9918739f04fc5ee4",
+        "name": "nodeguard feeds failing for 18h on {HOST.NAME}",
+        "expression": "min(/Nodeguard by Zabbix agent/nodeguard.kv[feeds_failed],19h)>0",
+        "priority": "INFO",
+        "description": "Transient-failure carrier; per-feed staleness escalates separately."
+       }
+      ]
+     },
+     {
+      "uuid": "7d147749fd2a40ffbce6e69170e16be1",
+      "name": "feeds oldest success",
+      "type": "DEPENDENT",
+      "key": "nodeguard.kv[feeds_last_success_ts_min]",
+      "delay": "0",
+      "value_type": "UNSIGNED",
+      "description": "min over configured feeds of the last successful exchange",
+      "history": "31d",
+      "trends": "180d",
+      "master_item": {
+       "key": "nodeguard.kv.raw"
+      },
+      "preprocessing": [
+       {
+        "type": "REGEX",
+        "parameters": [
+         "(?m)^ng\\.feeds_last_success_ts_min=(.+)$",
+         "\\1"
+        ]
+       }
+      ]
+     },
+     {
+      "uuid": "c4f8a46097944e9d8ec1a79c09d1043f",
+      "name": "feeds spamhaus_drop_v4 last success",
+      "type": "DEPENDENT",
+      "key": "nodeguard.kv[feeds_last_success_ts_spamhaus_drop_v4]",
+      "delay": "0",
+      "value_type": "UNSIGNED",
+      "description": "epoch of spamhaus_drop_v4's last successful HTTP exchange",
+      "history": "31d",
+      "trends": "180d",
+      "master_item": {
+       "key": "nodeguard.kv.raw"
+      },
+      "preprocessing": [
+       {
+        "type": "REGEX",
+        "parameters": [
+         "(?m)^ng\\.feeds_last_success_ts_spamhaus_drop_v4=(.+)$",
+         "\\1"
+        ]
+       }
+      ],
+      "triggers": [
+       {
+        "uuid": "e4c630828e4447b5a9e0cf2fae3f578c",
+        "name": "nodeguard feed spamhaus_drop_v4 stale on {HOST.NAME}",
+        "expression": "last(/Nodeguard by Zabbix agent/nodeguard.kv[feeds_last_success_ts_spamhaus_drop_v4])>0 and fuzzytime(/Nodeguard by Zabbix agent/nodeguard.kv[feeds_last_success_ts_spamhaus_drop_v4],46800)=0",
+        "priority": "WARNING",
+        "description": "Two full cycles plus margin without a successful exchange."
+       },
+       {
+        "uuid": "785b06aaaeca4b2899669bcec6384603",
+        "name": "nodeguard feed spamhaus_drop_v4 failed open on {HOST.NAME}",
+        "expression": "last(/Nodeguard by Zabbix agent/nodeguard.kv[feeds_last_success_ts_spamhaus_drop_v4])>0 and fuzzytime(/Nodeguard by Zabbix agent/nodeguard.kv[feeds_last_success_ts_spamhaus_drop_v4],93600)=0",
+        "priority": "AVERAGE",
+        "description": "Entries for this feed have expired in-kernel; designed decay, not an outage."
+       }
+      ]
+     },
+     {
+      "uuid": "1804ac2477be4dde902ca0a607d22098",
+      "name": "feeds spamhaus_drop_v4 snapshot age",
+      "type": "DEPENDENT",
+      "key": "nodeguard.kv[feeds_snapshot_age_spamhaus_drop_v4]",
+      "delay": "0",
+      "value_type": "UNSIGNED",
+      "description": "seconds since spamhaus_drop_v4's content last changed",
+      "history": "31d",
+      "trends": "180d",
+      "master_item": {
+       "key": "nodeguard.kv.raw"
+      },
+      "preprocessing": [
+       {
+        "type": "REGEX",
+        "parameters": [
+         "(?m)^ng\\.feeds_snapshot_age_spamhaus_drop_v4=(.+)$",
+         "\\1"
+        ]
+       }
+      ],
+      "triggers": [
+       {
+        "uuid": "29b6bb7d234048ee91232e36e9e8133a",
+        "name": "nodeguard feed spamhaus_drop_v4 upstream frozen on {HOST.NAME}",
+        "expression": "last(/Nodeguard by Zabbix agent/nodeguard.kv[feeds_snapshot_age_spamhaus_drop_v4])>604800",
+        "priority": "WARNING",
+        "description": "Upstream unchanged for 7 days; re-stamp hard-stops at 14 days."
+       }
+      ]
+     },
+     {
+      "uuid": "aca6d0689ab14ea6ba163e44b783fbdc",
+      "name": "feeds spamhaus_drop_v6 last success",
+      "type": "DEPENDENT",
+      "key": "nodeguard.kv[feeds_last_success_ts_spamhaus_drop_v6]",
+      "delay": "0",
+      "value_type": "UNSIGNED",
+      "description": "epoch of spamhaus_drop_v6's last successful HTTP exchange",
+      "history": "31d",
+      "trends": "180d",
+      "master_item": {
+       "key": "nodeguard.kv.raw"
+      },
+      "preprocessing": [
+       {
+        "type": "REGEX",
+        "parameters": [
+         "(?m)^ng\\.feeds_last_success_ts_spamhaus_drop_v6=(.+)$",
+         "\\1"
+        ]
+       }
+      ],
+      "triggers": [
+       {
+        "uuid": "e013306d0bdd4760b90efeb0dfcee988",
+        "name": "nodeguard feed spamhaus_drop_v6 stale on {HOST.NAME}",
+        "expression": "last(/Nodeguard by Zabbix agent/nodeguard.kv[feeds_last_success_ts_spamhaus_drop_v6])>0 and fuzzytime(/Nodeguard by Zabbix agent/nodeguard.kv[feeds_last_success_ts_spamhaus_drop_v6],46800)=0",
+        "priority": "WARNING",
+        "description": "Two full cycles plus margin without a successful exchange."
+       },
+       {
+        "uuid": "b7a8c351cd9d4f2a85dc7f2eefbe0b40",
+        "name": "nodeguard feed spamhaus_drop_v6 failed open on {HOST.NAME}",
+        "expression": "last(/Nodeguard by Zabbix agent/nodeguard.kv[feeds_last_success_ts_spamhaus_drop_v6])>0 and fuzzytime(/Nodeguard by Zabbix agent/nodeguard.kv[feeds_last_success_ts_spamhaus_drop_v6],93600)=0",
+        "priority": "AVERAGE",
+        "description": "Entries for this feed have expired in-kernel; designed decay, not an outage."
+       }
+      ]
+     },
+     {
+      "uuid": "44433d6bad8d41eea7655c5df9331a31",
+      "name": "feeds spamhaus_drop_v6 snapshot age",
+      "type": "DEPENDENT",
+      "key": "nodeguard.kv[feeds_snapshot_age_spamhaus_drop_v6]",
+      "delay": "0",
+      "value_type": "UNSIGNED",
+      "description": "seconds since spamhaus_drop_v6's content last changed",
+      "history": "31d",
+      "trends": "180d",
+      "master_item": {
+       "key": "nodeguard.kv.raw"
+      },
+      "preprocessing": [
+       {
+        "type": "REGEX",
+        "parameters": [
+         "(?m)^ng\\.feeds_snapshot_age_spamhaus_drop_v6=(.+)$",
+         "\\1"
+        ]
+       }
+      ],
+      "triggers": [
+       {
+        "uuid": "b2379498c7814f14a7f52f55f1b2eb34",
+        "name": "nodeguard feed spamhaus_drop_v6 upstream frozen on {HOST.NAME}",
+        "expression": "last(/Nodeguard by Zabbix agent/nodeguard.kv[feeds_snapshot_age_spamhaus_drop_v6])>604800",
+        "priority": "WARNING",
+        "description": "Upstream unchanged for 7 days; re-stamp hard-stops at 14 days."
+       }
+      ]
+     },
+     {
+      "uuid": "b54879302d134a3f9f21adf18ba2bbfc",
+      "name": "feeds dshield_top20 last success",
+      "type": "DEPENDENT",
+      "key": "nodeguard.kv[feeds_last_success_ts_dshield_top20]",
+      "delay": "0",
+      "value_type": "UNSIGNED",
+      "description": "epoch of dshield_top20's last successful HTTP exchange",
+      "history": "31d",
+      "trends": "180d",
+      "master_item": {
+       "key": "nodeguard.kv.raw"
+      },
+      "preprocessing": [
+       {
+        "type": "REGEX",
+        "parameters": [
+         "(?m)^ng\\.feeds_last_success_ts_dshield_top20=(.+)$",
+         "\\1"
+        ]
+       }
+      ],
+      "triggers": [
+       {
+        "uuid": "b93853f7d30043d9800acd972f49e312",
+        "name": "nodeguard feed dshield_top20 stale on {HOST.NAME}",
+        "expression": "last(/Nodeguard by Zabbix agent/nodeguard.kv[feeds_last_success_ts_dshield_top20])>0 and fuzzytime(/Nodeguard by Zabbix agent/nodeguard.kv[feeds_last_success_ts_dshield_top20],46800)=0",
+        "priority": "WARNING",
+        "description": "Two full cycles plus margin without a successful exchange."
+       },
+       {
+        "uuid": "edf99a3b0a064649bfc1b7396fb8281b",
+        "name": "nodeguard feed dshield_top20 failed open on {HOST.NAME}",
+        "expression": "last(/Nodeguard by Zabbix agent/nodeguard.kv[feeds_last_success_ts_dshield_top20])>0 and fuzzytime(/Nodeguard by Zabbix agent/nodeguard.kv[feeds_last_success_ts_dshield_top20],93600)=0",
+        "priority": "AVERAGE",
+        "description": "Entries for this feed have expired in-kernel; designed decay, not an outage."
+       }
+      ]
+     },
+     {
+      "uuid": "8319f64f0e334b7bb67bcfea9739ca39",
+      "name": "feeds dshield_top20 snapshot age",
+      "type": "DEPENDENT",
+      "key": "nodeguard.kv[feeds_snapshot_age_dshield_top20]",
+      "delay": "0",
+      "value_type": "UNSIGNED",
+      "description": "seconds since dshield_top20's content last changed",
+      "history": "31d",
+      "trends": "180d",
+      "master_item": {
+       "key": "nodeguard.kv.raw"
+      },
+      "preprocessing": [
+       {
+        "type": "REGEX",
+        "parameters": [
+         "(?m)^ng\\.feeds_snapshot_age_dshield_top20=(.+)$",
+         "\\1"
+        ]
+       }
+      ],
+      "triggers": [
+       {
+        "uuid": "feeff08ba116419c8b9d066a265e3fd0",
+        "name": "nodeguard feed dshield_top20 upstream frozen on {HOST.NAME}",
+        "expression": "last(/Nodeguard by Zabbix agent/nodeguard.kv[feeds_snapshot_age_dshield_top20])>604800",
+        "priority": "WARNING",
+        "description": "Upstream unchanged for 7 days; re-stamp hard-stops at 14 days."
+       }
+      ]
+     },
+     {
+      "uuid": "d2df9731226948abbf3130b58fc91fb3",
+      "name": "feeds map errors",
+      "type": "DEPENDENT",
+      "key": "nodeguard.kv[feeds_map_errors]",
+      "delay": "0",
+      "value_type": "UNSIGNED",
+      "description": "per-key bpftool failures this run (one lost key each, never a lost batch)",
+      "history": "31d",
+      "trends": "180d",
+      "master_item": {
+       "key": "nodeguard.kv.raw"
+      },
+      "preprocessing": [
+       {
+        "type": "REGEX",
+        "parameters": [
+         "(?m)^ng\\.feeds_map_errors=(.+)$",
+         "\\1"
+        ]
+       }
+      ]
+     },
+     {
+      "uuid": "1d861446d096522e8575e1a1b5b152c0",
+      "name": "nodeguard kv timestamp",
+      "type": "DEPENDENT",
+      "key": "nodeguard.kv[ts]",
+      "delay": "0",
+      "value_type": "UNSIGNED",
+      "units": "unixtime",
+      "description": "epoch stamped by the exporter at the top of the kv file",
+      "history": "31d",
+      "trends": "180d",
+      "master_item": {
+       "key": "nodeguard.kv.raw"
+      },
+      "preprocessing": [
+       {
+        "type": "REGEX",
+        "parameters": [
+         "(?m)^ng\\.ts=(.+)$",
+         "\\1"
+        ]
+       }
+      ],
+      "triggers": [
+       {
+        "uuid": "c3e7bdae26115820bb13722f12390607",
+        "name": "nodeguard telemetry clock skew or frozen kv on {HOST.NAME}",
+        "expression": "fuzzytime(/Nodeguard by Zabbix agent/nodeguard.kv[ts],300)=0",
+        "priority": "HIGH",
+        "description": "The kv timestamp is more than 5 minutes from server time: a frozen but still-served kv file or host clock skew. Complements the nodata trigger, which only catches the file not arriving at all."
+       }
+      ]
+     },
+     {
+      "uuid": "333b6ef4c256578daaa774c7443150a7",
+      "name": "nodeguard stats read failure",
+      "type": "DEPENDENT",
+      "key": "nodeguard.kv[stats_read_fail]",
+      "delay": "0",
+      "value_type": "UNSIGNED",
+      "description": "1 = the stats pin exists but the dump or parse failed; the counter keys are omitted rather than served as zeros",
+      "history": "31d",
+      "trends": "180d",
+      "master_item": {
+       "key": "nodeguard.kv.raw"
+      },
+      "preprocessing": [
+       {
+        "type": "REGEX",
+        "parameters": [
+         "(?m)^ng\\.stats_read_fail=(.+)$",
+         "\\1"
+        ]
+       }
+      ]
+     },
+     {
+      "uuid": "f58178cc4b6e59b7825802a2964ea7cf",
+      "name": "nodeguard stats2 read failure",
+      "type": "DEPENDENT",
+      "key": "nodeguard.kv[stats2_read_fail]",
+      "delay": "0",
+      "value_type": "UNSIGNED",
+      "description": "1 = the stats2 pin exists but the dump or parse failed; the sanity counter keys are omitted rather than served as zeros",
+      "history": "31d",
+      "trends": "180d",
+      "master_item": {
+       "key": "nodeguard.kv.raw"
+      },
+      "preprocessing": [
+       {
+        "type": "REGEX",
+        "parameters": [
+         "(?m)^ng\\.stats2_read_fail=(.+)$",
+         "\\1"
+        ]
+       }
+      ],
+      "triggers": [
+       {
+        "uuid": "f81f6d6a5db855e0ac08dd36203529f0",
+        "name": "nodeguard stats2 unreadable on {HOST.NAME}",
+        "expression": "last(/Nodeguard by Zabbix agent/nodeguard.kv[stats2_read_fail])=1",
+        "priority": "WARNING",
+        "description": "The stats2 pin exists but could not be read; sanity counters are unknown, not zero."
+       }
+      ]
+     },
+     {
+      "uuid": "4a14fc66d8d75e91bed947cb99be484c",
+      "name": "nodeguard expired pass rate",
+      "type": "DEPENDENT",
+      "key": "nodeguard.kv[pass_expired]",
+      "delay": "0",
+      "value_type": "FLOAT",
+      "units": "pps",
+      "description": "packets per second passed because their block entry had expired in-kernel",
+      "history": "31d",
+      "trends": "180d",
+      "master_item": {
+       "key": "nodeguard.kv.raw"
+      },
+      "preprocessing": [
+       {
+        "type": "REGEX",
+        "parameters": [
+         "(?m)^ng\\.pass_expired=(.+)$",
+         "\\1"
+        ]
+       },
+       {
+        "type": "CHANGE_PER_SECOND",
+        "parameters": [
+         ""
+        ]
+       }
+      ]
+     },
+     {
+      "uuid": "971f14ef2ea55b74b5fd3ef9a9aa0dd0",
+      "name": "nodeguard non-IP pass rate",
+      "type": "DEPENDENT",
+      "key": "nodeguard.kv[pass_nonip]",
+      "delay": "0",
+      "value_type": "FLOAT",
+      "units": "pps",
+      "description": "non-IP ethertype passes per second",
+      "history": "31d",
+      "trends": "180d",
+      "master_item": {
+       "key": "nodeguard.kv.raw"
+      },
+      "preprocessing": [
+       {
+        "type": "REGEX",
+        "parameters": [
+         "(?m)^ng\\.pass_nonip=(.+)$",
+         "\\1"
+        ]
+       },
+       {
+        "type": "CHANGE_PER_SECOND",
+        "parameters": [
+         ""
+        ]
+       }
+      ]
+     },
+     {
+      "uuid": "3e5e45877f025d8d90c0809b41810136",
+      "name": "nodeguard parse-fail pass rate",
+      "type": "DEPENDENT",
+      "key": "nodeguard.kv[pass_parsefail]",
+      "delay": "0",
+      "value_type": "FLOAT",
+      "units": "pps",
+      "description": "packets per second passed because the IP header failed bounds validation (fail-open by design)",
+      "history": "31d",
+      "trends": "180d",
+      "master_item": {
+       "key": "nodeguard.kv.raw"
+      },
+      "preprocessing": [
+       {
+        "type": "REGEX",
+        "parameters": [
+         "(?m)^ng\\.pass_parsefail=(.+)$",
+         "\\1"
+        ]
+       },
+       {
+        "type": "CHANGE_PER_SECOND",
+        "parameters": [
+         ""
+        ]
+       }
+      ]
+     },
+     {
+      "uuid": "930aaa33c45a53739581bc2424636ec8",
+      "name": "nodeguard TCP SYN+FIN packets",
+      "type": "DEPENDENT",
+      "key": "nodeguard.kv[tcp_synfin]",
+      "delay": "0",
+      "value_type": "UNSIGNED",
+      "description": "SYN and FIN set together; classic scanner fingerprint, counted statelessly before any verdict (cumulative)",
+      "history": "31d",
+      "trends": "180d",
+      "master_item": {
+       "key": "nodeguard.kv.raw"
+      },
+      "preprocessing": [
+       {
+        "type": "REGEX",
+        "parameters": [
+         "(?m)^ng\\.tcp_synfin=(.+)$",
+         "\\1"
+        ]
+       }
+      ]
+     },
+     {
+      "uuid": "be9bc7f4166a568894f10cf711b57ce7",
+      "name": "nodeguard TCP SYN+FIN rate",
+      "type": "DEPENDENT",
+      "key": "nodeguard.kv[tcp_synfin.rate]",
+      "delay": "0",
+      "value_type": "FLOAT",
+      "units": "pps",
+      "description": "SYN and FIN set together; classic scanner fingerprint, counted statelessly before any verdict (per second)",
+      "history": "31d",
+      "trends": "90d",
+      "master_item": {
+       "key": "nodeguard.kv.raw"
+      },
+      "preprocessing": [
+       {
+        "type": "REGEX",
+        "parameters": [
+         "(?m)^ng\\.tcp_synfin=(.+)$",
+         "\\1"
+        ]
+       },
+       {
+        "type": "CHANGE_PER_SECOND",
+        "parameters": [
+         ""
+        ]
+       }
+      ]
+     },
+     {
+      "uuid": "3799731a7a4255788daaa2388b6c9fa6",
+      "name": "nodeguard TCP SYN+RST packets",
+      "type": "DEPENDENT",
+      "key": "nodeguard.kv[tcp_synrst]",
+      "delay": "0",
+      "value_type": "UNSIGNED",
+      "description": "SYN and RST set together; impossible combination, counted statelessly (cumulative)",
+      "history": "31d",
+      "trends": "180d",
+      "master_item": {
+       "key": "nodeguard.kv.raw"
+      },
+      "preprocessing": [
+       {
+        "type": "REGEX",
+        "parameters": [
+         "(?m)^ng\\.tcp_synrst=(.+)$",
+         "\\1"
+        ]
+       }
+      ]
+     },
+     {
+      "uuid": "c55f682e8c7d58cbac73527131ee2336",
+      "name": "nodeguard TCP SYN+RST rate",
+      "type": "DEPENDENT",
+      "key": "nodeguard.kv[tcp_synrst.rate]",
+      "delay": "0",
+      "value_type": "FLOAT",
+      "units": "pps",
+      "description": "SYN and RST set together; impossible combination, counted statelessly (per second)",
+      "history": "31d",
+      "trends": "90d",
+      "master_item": {
+       "key": "nodeguard.kv.raw"
+      },
+      "preprocessing": [
+       {
+        "type": "REGEX",
+        "parameters": [
+         "(?m)^ng\\.tcp_synrst=(.+)$",
+         "\\1"
+        ]
+       },
+       {
+        "type": "CHANGE_PER_SECOND",
+        "parameters": [
+         ""
+        ]
+       }
+      ]
+     },
+     {
+      "uuid": "365f2c3d647057048cd0d596590c6e29",
+      "name": "nodeguard TCP NULL packets",
+      "type": "DEPENDENT",
+      "key": "nodeguard.kv[tcp_null]",
+      "delay": "0",
+      "value_type": "UNSIGNED",
+      "description": "no TCP flags set; NULL scan fingerprint, counted statelessly (cumulative)",
+      "history": "31d",
+      "trends": "180d",
+      "master_item": {
+       "key": "nodeguard.kv.raw"
+      },
+      "preprocessing": [
+       {
+        "type": "REGEX",
+        "parameters": [
+         "(?m)^ng\\.tcp_null=(.+)$",
+         "\\1"
+        ]
+       }
+      ]
+     },
+     {
+      "uuid": "95fd193bde165462b0e4e064fb6ff525",
+      "name": "nodeguard TCP NULL rate",
+      "type": "DEPENDENT",
+      "key": "nodeguard.kv[tcp_null.rate]",
+      "delay": "0",
+      "value_type": "FLOAT",
+      "units": "pps",
+      "description": "no TCP flags set; NULL scan fingerprint, counted statelessly (per second)",
+      "history": "31d",
+      "trends": "90d",
+      "master_item": {
+       "key": "nodeguard.kv.raw"
+      },
+      "preprocessing": [
+       {
+        "type": "REGEX",
+        "parameters": [
+         "(?m)^ng\\.tcp_null=(.+)$",
+         "\\1"
+        ]
+       },
+       {
+        "type": "CHANGE_PER_SECOND",
+        "parameters": [
+         ""
+        ]
+       }
+      ]
+     },
+     {
+      "uuid": "d13765ec39645cf4b33c9ff174f682b6",
+      "name": "nodeguard TCP XMAS packets",
+      "type": "DEPENDENT",
+      "key": "nodeguard.kv[tcp_xmas]",
+      "delay": "0",
+      "value_type": "UNSIGNED",
+      "description": "FIN, PSH, and URG set together; XMAS scan fingerprint, counted statelessly (cumulative)",
+      "history": "31d",
+      "trends": "180d",
+      "master_item": {
+       "key": "nodeguard.kv.raw"
+      },
+      "preprocessing": [
+       {
+        "type": "REGEX",
+        "parameters": [
+         "(?m)^ng\\.tcp_xmas=(.+)$",
+         "\\1"
+        ]
+       }
+      ]
+     },
+     {
+      "uuid": "ed041709fa465535a50942c23e96c19c",
+      "name": "nodeguard TCP XMAS rate",
+      "type": "DEPENDENT",
+      "key": "nodeguard.kv[tcp_xmas.rate]",
+      "delay": "0",
+      "value_type": "FLOAT",
+      "units": "pps",
+      "description": "FIN, PSH, and URG set together; XMAS scan fingerprint, counted statelessly (per second)",
+      "history": "31d",
+      "trends": "90d",
+      "master_item": {
+       "key": "nodeguard.kv.raw"
+      },
+      "preprocessing": [
+       {
+        "type": "REGEX",
+        "parameters": [
+         "(?m)^ng\\.tcp_xmas=(.+)$",
+         "\\1"
+        ]
+       },
+       {
+        "type": "CHANGE_PER_SECOND",
+        "parameters": [
+         ""
+        ]
+       }
+      ]
+     },
+     {
+      "uuid": "e5fc8490868b5cf8a6c88dabab1f8ca1",
+      "name": "nodeguard low TTL packets",
+      "type": "DEPENDENT",
+      "key": "nodeguard.kv[ttl_low]",
+      "delay": "0",
+      "value_type": "UNSIGNED",
+      "description": "TTL or hop limit below the build-time floor (default 5); traceroute noise or evasion probing (cumulative)",
+      "history": "31d",
+      "trends": "180d",
+      "master_item": {
+       "key": "nodeguard.kv.raw"
+      },
+      "preprocessing": [
+       {
+        "type": "REGEX",
+        "parameters": [
+         "(?m)^ng\\.ttl_low=(.+)$",
+         "\\1"
+        ]
+       }
+      ]
+     },
+     {
+      "uuid": "7bad7131e763530298c0e555ffb40537",
+      "name": "nodeguard low TTL rate",
+      "type": "DEPENDENT",
+      "key": "nodeguard.kv[ttl_low.rate]",
+      "delay": "0",
+      "value_type": "FLOAT",
+      "units": "pps",
+      "description": "TTL or hop limit below the build-time floor (default 5); traceroute noise or evasion probing (per second)",
+      "history": "31d",
+      "trends": "90d",
+      "master_item": {
+       "key": "nodeguard.kv.raw"
+      },
+      "preprocessing": [
+       {
+        "type": "REGEX",
+        "parameters": [
+         "(?m)^ng\\.ttl_low=(.+)$",
+         "\\1"
+        ]
+       },
+       {
+        "type": "CHANGE_PER_SECOND",
+        "parameters": [
+         ""
+        ]
+       }
+      ]
+     },
+     {
+      "uuid": "10ce701fb5195ee8b42d272216b3d802",
+      "name": "nodeguard IPv4 fragment packets",
+      "type": "DEPENDENT",
+      "key": "nodeguard.kv[frag_v4]",
+      "delay": "0",
+      "value_type": "UNSIGNED",
+      "description": "IPv4 packets with a nonzero fragment offset (cumulative)",
+      "history": "31d",
+      "trends": "180d",
+      "master_item": {
+       "key": "nodeguard.kv.raw"
+      },
+      "preprocessing": [
+       {
+        "type": "REGEX",
+        "parameters": [
+         "(?m)^ng\\.frag_v4=(.+)$",
+         "\\1"
+        ]
+       }
+      ]
+     },
+     {
+      "uuid": "73375e5f980a55b893dbda1a27d7a790",
+      "name": "nodeguard IPv4 fragment rate",
+      "type": "DEPENDENT",
+      "key": "nodeguard.kv[frag_v4.rate]",
+      "delay": "0",
+      "value_type": "FLOAT",
+      "units": "pps",
+      "description": "IPv4 packets with a nonzero fragment offset (per second)",
+      "history": "31d",
+      "trends": "90d",
+      "master_item": {
+       "key": "nodeguard.kv.raw"
+      },
+      "preprocessing": [
+       {
+        "type": "REGEX",
+        "parameters": [
+         "(?m)^ng\\.frag_v4=(.+)$",
+         "\\1"
+        ]
+       },
+       {
+        "type": "CHANGE_PER_SECOND",
+        "parameters": [
+         ""
+        ]
+       }
+      ]
+     },
+     {
+      "uuid": "4e62a77eaf505b69b51476970c842c44",
+      "name": "nodeguard IPv6 fragment packets",
+      "type": "DEPENDENT",
+      "key": "nodeguard.kv[frag_v6]",
+      "delay": "0",
+      "value_type": "UNSIGNED",
+      "description": "IPv6 packets carrying a fragment header (cumulative)",
+      "history": "31d",
+      "trends": "180d",
+      "master_item": {
+       "key": "nodeguard.kv.raw"
+      },
+      "preprocessing": [
+       {
+        "type": "REGEX",
+        "parameters": [
+         "(?m)^ng\\.frag_v6=(.+)$",
+         "\\1"
+        ]
+       }
+      ]
+     },
+     {
+      "uuid": "f8a4e8dbcc9d58b59c518f68a6cef4c5",
+      "name": "nodeguard IPv6 fragment rate",
+      "type": "DEPENDENT",
+      "key": "nodeguard.kv[frag_v6.rate]",
+      "delay": "0",
+      "value_type": "FLOAT",
+      "units": "pps",
+      "description": "IPv6 packets carrying a fragment header (per second)",
+      "history": "31d",
+      "trends": "90d",
+      "master_item": {
+       "key": "nodeguard.kv.raw"
+      },
+      "preprocessing": [
+       {
+        "type": "REGEX",
+        "parameters": [
+         "(?m)^ng\\.frag_v6=(.+)$",
+         "\\1"
+        ]
+       },
+       {
+        "type": "CHANGE_PER_SECOND",
+        "parameters": [
+         ""
+        ]
+       }
+      ]
+     },
+     {
+      "uuid": "0ef4692a9fc559b8b16d55c7393e74a6",
+      "name": "suricata alerts",
+      "type": "DEPENDENT",
+      "key": "nodeguard.kv[suricata_alerts]",
+      "delay": "0",
+      "value_type": "UNSIGNED",
+      "description": "cumulative detect.alert count from the same suricatasc dump-counters call as kernel_drops",
+      "history": "31d",
+      "trends": "180d",
+      "master_item": {
+       "key": "nodeguard.kv.raw"
+      },
+      "preprocessing": [
+       {
+        "type": "REGEX",
+        "parameters": [
+         "(?m)^ng\\.suricata_alerts=(.+)$",
+         "\\1"
+        ]
+       }
+      ]
+     },
+     {
+      "uuid": "b701bf2eaea95ef5b42987ace3d7e434",
+      "name": "suricata alerts rate",
+      "type": "DEPENDENT",
+      "key": "nodeguard.kv[suricata_alerts.rate]",
+      "delay": "0",
+      "value_type": "FLOAT",
+      "units": "pps",
+      "description": "detection alerts per second",
+      "history": "31d",
+      "trends": "90d",
+      "master_item": {
+       "key": "nodeguard.kv.raw"
+      },
+      "preprocessing": [
+       {
+        "type": "REGEX",
+        "parameters": [
+         "(?m)^ng\\.suricata_alerts=(.+)$",
+         "\\1"
+        ]
+       },
+       {
+        "type": "CHANGE_PER_SECOND",
+        "parameters": [
+         ""
+        ]
+       }
+      ],
+      "triggers": [
+       {
+        "uuid": "d875cba8241c54b08a0baee3807d02a3",
+        "name": "suricata alert rate above weekly baseline on {HOST.NAME}",
+        "expression": "baselinedev(/Nodeguard by Zabbix agent/nodeguard.kv[suricata_alerts.rate],1h:now/h,\"d\",10)>3 and last(/Nodeguard by Zabbix agent/nodeguard.kv[suricata_alerts.rate])>1",
+        "priority": "INFO",
+        "description": "Seasonal baseline deviation with a 1/s absolute floor. Imported at Information severity; promoted only after 14 days of reviewed-quiet trend rows."
+       }
+      ]
+     },
+     {
+      "uuid": "195d25f61b68555d864a22a48c70b453",
+      "name": "suricata kernel drop rate",
+      "type": "DEPENDENT",
+      "key": "nodeguard.kv[kernel_drops.rate]",
+      "delay": "0",
+      "value_type": "FLOAT",
+      "units": "pps",
+      "description": "capture-ring drops per second (rate twin of the cumulative counter, fixing the raw-cumulative plot)",
+      "history": "31d",
+      "trends": "90d",
+      "master_item": {
+       "key": "nodeguard.kv.raw"
+      },
+      "preprocessing": [
+       {
+        "type": "REGEX",
+        "parameters": [
+         "(?m)^ng\\.kernel_drops=(.+)$",
+         "\\1"
+        ]
+       },
+       {
+        "type": "CHANGE_PER_SECOND",
+        "parameters": [
+         ""
+        ]
+       }
+      ]
+     },
+     {
+      "uuid": "8f37df1a0b49542ab4afd80a38ffbce3",
+      "name": "responder alerts seen",
+      "type": "DEPENDENT",
+      "key": "nodeguard.kv[resp_alerts_seen]",
+      "delay": "0",
+      "value_type": "UNSIGNED",
+      "description": "cumulative EVE alerts the responder has consumed",
+      "history": "31d",
+      "trends": "180d",
+      "master_item": {
+       "key": "nodeguard.kv.raw"
+      },
+      "preprocessing": [
+       {
+        "type": "REGEX",
+        "parameters": [
+         "(?m)^ng\\.resp_alerts_seen=(.+)$",
+         "\\1"
+        ]
+       }
+      ]
+     },
+     {
+      "uuid": "7b12a4a67d2d56699e9d7b09b000e63d",
+      "name": "responder blocks issued",
+      "type": "DEPENDENT",
+      "key": "nodeguard.kv[resp_blocks_issued]",
+      "delay": "0",
+      "value_type": "UNSIGNED",
+      "description": "cumulative blocks the responder has written to the maps",
+      "history": "31d",
+      "trends": "180d",
+      "master_item": {
+       "key": "nodeguard.kv.raw"
+      },
+      "preprocessing": [
+       {
+        "type": "REGEX",
+        "parameters": [
+         "(?m)^ng\\.resp_blocks_issued=(.+)$",
+         "\\1"
+        ]
+       }
+      ]
+     },
+     {
+      "uuid": "071d8406bdb7530bb046c3b0ebae4b95",
+      "name": "responder dry-run would-block",
+      "type": "DEPENDENT",
+      "key": "nodeguard.kv[resp_dryrun_would_block]",
+      "delay": "0",
+      "value_type": "UNSIGNED",
+      "description": "cumulative blocks the responder would have issued while in dry-run",
+      "history": "31d",
+      "trends": "180d",
+      "master_item": {
+       "key": "nodeguard.kv.raw"
+      },
+      "preprocessing": [
+       {
+        "type": "REGEX",
+        "parameters": [
+         "(?m)^ng\\.resp_dryrun_would_block=(.+)$",
+         "\\1"
+        ]
+       }
+      ]
+     },
+     {
+      "uuid": "d53ee93cc7de5b61acbabba70268f6b4",
+      "name": "responder last alert time",
+      "type": "DEPENDENT",
+      "key": "nodeguard.kv[resp_last_alert_ts]",
+      "delay": "0",
+      "value_type": "UNSIGNED",
+      "units": "unixtime",
+      "description": "epoch of the last alert the responder consumed",
+      "history": "31d",
+      "trends": "180d",
+      "master_item": {
+       "key": "nodeguard.kv.raw"
+      },
+      "preprocessing": [
+       {
+        "type": "REGEX",
+        "parameters": [
+         "(?m)^ng\\.resp_last_alert_ts=(.+)$",
+         "\\1"
+        ]
+       }
+      ]
+     },
+     {
+      "uuid": "34d0883fd13c5ec8bdc70f3af69540f4",
+      "name": "responder last action time",
+      "type": "DEPENDENT",
+      "key": "nodeguard.kv[resp_last_action_ts]",
+      "delay": "0",
+      "value_type": "UNSIGNED",
+      "units": "unixtime",
+      "description": "epoch of the responder's last block or dry-run decision",
+      "history": "31d",
+      "trends": "180d",
+      "master_item": {
+       "key": "nodeguard.kv.raw"
+      },
+      "preprocessing": [
+       {
+        "type": "REGEX",
+        "parameters": [
+         "(?m)^ng\\.resp_last_action_ts=(.+)$",
+         "\\1"
+        ]
+       }
+      ]
+     },
+     {
+      "uuid": "7c453bd6cb8d5ea4b30e69c30ef927fd",
+      "name": "nodeguard blocks v4",
+      "type": "DEPENDENT",
+      "key": "nodeguard.kv[blocks_v4]",
+      "delay": "0",
+      "value_type": "UNSIGNED",
+      "description": "live v4 block-map entries, from the sweep cache",
+      "history": "31d",
+      "trends": "180d",
+      "master_item": {
+       "key": "nodeguard.kv.raw"
+      },
+      "preprocessing": [
+       {
+        "type": "REGEX",
+        "parameters": [
+         "(?m)^ng\\.blocks_v4=(.+)$",
+         "\\1"
+        ]
+       }
+      ]
+     },
+     {
+      "uuid": "d816185b3e705062b08992d8606909a0",
+      "name": "nodeguard blocks v6",
+      "type": "DEPENDENT",
+      "key": "nodeguard.kv[blocks_v6]",
+      "delay": "0",
+      "value_type": "UNSIGNED",
+      "description": "live v6 block-map entries, from the sweep cache",
+      "history": "31d",
+      "trends": "180d",
+      "master_item": {
+       "key": "nodeguard.kv.raw"
+      },
+      "preprocessing": [
+       {
+        "type": "REGEX",
+        "parameters": [
+         "(?m)^ng\\.blocks_v6=(.+)$",
+         "\\1"
+        ]
+       }
+      ]
+     },
+     {
+      "uuid": "ed5d36ace5955ab7893f8548e20562d9",
+      "name": "nodeguard v4 block map utilization",
+      "type": "DEPENDENT",
+      "key": "nodeguard.kv[util_v4_pct]",
+      "delay": "0",
+      "value_type": "FLOAT",
+      "units": "%",
+      "description": "v4 block-map fill percentage; denominator read from the installed map spec",
+      "history": "31d",
+      "trends": "180d",
+      "master_item": {
+       "key": "nodeguard.kv.raw"
+      },
+      "preprocessing": [
+       {
+        "type": "REGEX",
+        "parameters": [
+         "(?m)^ng\\.util_v4_pct=(.+)$",
+         "\\1"
+        ]
+       }
+      ],
+      "triggers": [
+       {
+        "uuid": "04ee59f3e9be520799c7bafd737781fe",
+        "name": "nodeguard v4 block map over 85 percent full on {HOST.NAME}",
+        "expression": "last(/Nodeguard by Zabbix agent/nodeguard.kv[util_v4_pct])>85",
+        "priority": "WARNING",
+        "description": "Static ceiling; the backstop the trend projection cannot provide."
+       },
+       {
+        "uuid": "aec3be068e3156a4a64a92384063adb8",
+        "name": "nodeguard v4 block map projected full within 24h on {HOST.NAME}",
+        "expression": "timeleft(/Nodeguard by Zabbix agent/nodeguard.kv[util_v4_pct],7d,90)<86400 and timeleft(/Nodeguard by Zabbix agent/nodeguard.kv[util_v4_pct],7d,90)<>-1",
+        "priority": "WARNING",
+        "description": "7-day trend projects 90 percent within 24h; the <>-1 guard suppresses the no-projection case."
+       }
+      ]
+     },
+     {
+      "uuid": "b06203f6238d57849630dfd9492f5126",
+      "name": "nodeguard v6 block map utilization",
+      "type": "DEPENDENT",
+      "key": "nodeguard.kv[util_v6_pct]",
+      "delay": "0",
+      "value_type": "FLOAT",
+      "units": "%",
+      "description": "v6 block-map fill percentage; denominator read from the installed map spec",
+      "history": "31d",
+      "trends": "180d",
+      "master_item": {
+       "key": "nodeguard.kv.raw"
+      },
+      "preprocessing": [
+       {
+        "type": "REGEX",
+        "parameters": [
+         "(?m)^ng\\.util_v6_pct=(.+)$",
+         "\\1"
+        ]
+       }
+      ],
+      "triggers": [
+       {
+        "uuid": "f73d6c6dd3325e39afb6fa6d5aa0ac9c",
+        "name": "nodeguard v6 block map over 85 percent full on {HOST.NAME}",
+        "expression": "last(/Nodeguard by Zabbix agent/nodeguard.kv[util_v6_pct])>85",
+        "priority": "WARNING",
+        "description": "Static ceiling; the backstop the trend projection cannot provide."
+       },
+       {
+        "uuid": "b0e6f1dadde75e3c8988ddb861015acb",
+        "name": "nodeguard v6 block map projected full within 24h on {HOST.NAME}",
+        "expression": "timeleft(/Nodeguard by Zabbix agent/nodeguard.kv[util_v6_pct],7d,90)<86400 and timeleft(/Nodeguard by Zabbix agent/nodeguard.kv[util_v6_pct],7d,90)<>-1",
+        "priority": "WARNING",
+        "description": "7-day trend projects 90 percent within 24h; the <>-1 guard suppresses the no-projection case."
+       }
+      ]
+     },
+     {
+      "uuid": "9d6fe286976057289a7ab652d9782db9",
+      "name": "nodeguard sweep age",
+      "type": "DEPENDENT",
+      "key": "nodeguard.kv[sweep_age]",
+      "delay": "0",
+      "value_type": "UNSIGNED",
+      "units": "s",
+      "description": "seconds since the sweep last wrote the map statistics cache",
+      "history": "31d",
+      "trends": "180d",
+      "master_item": {
+       "key": "nodeguard.kv.raw"
+      },
+      "preprocessing": [
+       {
+        "type": "REGEX",
+        "parameters": [
+         "(?m)^ng\\.sweep_age=(.+)$",
+         "\\1"
+        ]
+       }
+      ],
+      "triggers": [
+       {
+        "uuid": "8c861a3e099254ada4577a07d75d5bc1",
+        "name": "nodeguard sweep cache stale on {HOST.NAME}",
+        "expression": "last(/Nodeguard by Zabbix agent/nodeguard.kv[sweep_age])>1800",
+        "priority": "WARNING",
+        "description": "Three sweep periods without a cache write; map counts are aging. Age is first-class so 0 scanned can never read as 0 found."
+       }
+      ]
+     },
+     {
+      "uuid": "73e3ac82f0045566a00a5564849e6e38",
+      "name": "nodeguard sweep walk duration",
+      "type": "DEPENDENT",
+      "key": "nodeguard.kv[sweep_walk_ms]",
+      "delay": "0",
+      "value_type": "FLOAT",
+      "units": "ms",
+      "description": "wall time of the sweep's full trie walk; trends make walk degradation visible before it hurts",
+      "history": "31d",
+      "trends": "180d",
+      "master_item": {
+       "key": "nodeguard.kv.raw"
+      },
+      "preprocessing": [
+       {
+        "type": "REGEX",
+        "parameters": [
+         "(?m)^ng\\.sweep_walk_ms=(.+)$",
+         "\\1"
+        ]
+       }
+      ]
+     },
+     {
+      "uuid": "a7abbd11419159e39b7c6579dd67eb7e",
+      "name": "nodeguard top blocked hits",
+      "type": "DEPENDENT",
+      "key": "nodeguard.kv[top1_hits]",
+      "delay": "0",
+      "value_type": "UNSIGNED",
+      "description": "hit count of the busiest blocked entry at the last sweep",
+      "history": "31d",
+      "trends": "180d",
+      "master_item": {
+       "key": "nodeguard.kv.raw"
+      },
+      "preprocessing": [
+       {
+        "type": "REGEX",
+        "parameters": [
+         "(?m)^ng\\.top1_hits=(.+)$",
+         "\\1"
+        ]
+       }
+      ],
+      "triggers": [
+       {
+        "uuid": "e34d3917a0a55362a20a5fe65ec5e0f8",
+        "name": "nodeguard block-hit pressure above weekly baseline on {HOST.NAME}",
+        "expression": "baselinedev(/Nodeguard by Zabbix agent/nodeguard.kv[top1_hits],1h:now/h,\"d\",10)>3 and last(/Nodeguard by Zabbix agent/nodeguard.kv[top1_hits])>1000",
+        "priority": "INFO",
+        "description": "Seasonal baseline deviation with an absolute floor. Imported at Information severity; promoted only after 14 days of reviewed-quiet trend rows."
+       }
+      ]
+     },
+     {
+      "uuid": "9e5cadcb01e15ef38513dc8814d7091d",
+      "name": "nodeguard top blocked sources",
+      "type": "DEPENDENT",
+      "key": "nodeguard.kv[top_blocked]",
+      "delay": "0",
+      "value_type": "TEXT",
+      "description": "top-5 blocked sources ranked by hit DELTA since the previous sweep walk, cumulative carried as the secondary figure",
+      "history": "31d",
+      "trends": "0",
+      "master_item": {
+       "key": "nodeguard.kv.raw"
+      },
+      "preprocessing": [
+       {
+        "type": "REGEX",
+        "parameters": [
+         "(?m)^ng\\.top_blocked=(.+)$",
+         "\\1"
+        ]
+       }
+      ]
+     },
+     {
+      "uuid": "e5a481f70fc45d1ebf402ac34357880a",
+      "name": "nodeguard re-arm count",
+      "type": "DEPENDENT",
+      "key": "nodeguard.kv[rearm_count]",
+      "delay": "0",
+      "value_type": "UNSIGNED",
+      "description": "cumulative once-per-boot kill-switch auto re-arms, from config map slot 2",
+      "history": "31d",
+      "trends": "180d",
+      "master_item": {
+       "key": "nodeguard.kv.raw"
+      },
+      "preprocessing": [
+       {
+        "type": "REGEX",
+        "parameters": [
+         "(?m)^ng\\.rearm_count=(.+)$",
+         "\\1"
+        ]
+       }
+      ],
+      "triggers": [
+       {
+        "uuid": "453e812e874e5cc1bd54f2dfe1077f62",
+        "name": "nodeguard kill switch auto re-arm occurred on {HOST.NAME}",
+        "expression": "change(/Nodeguard by Zabbix agent/nodeguard.kv[rearm_count])>0",
+        "priority": "WARNING",
+        "description": "The watchdog re-armed enforcement after a latch; review why the latch happened."
+       }
+      ]
+     },
+     {
+      "uuid": "f19114fea9415d85a681489280304d0a",
+      "name": "nodeguard program identity match",
+      "type": "DEPENDENT",
+      "key": "nodeguard.kv[prog_match]",
+      "delay": "0",
+      "value_type": "UNSIGNED",
+      "description": "1 = the live head program id equals /run/nodeguard/expected_prog_id; key omitted when the expected id is unknown, so the item goes unsupported instead of false-paging",
+      "history": "31d",
+      "trends": "180d",
+      "master_item": {
+       "key": "nodeguard.kv.raw"
+      },
+      "preprocessing": [
+       {
+        "type": "REGEX",
+        "parameters": [
+         "(?m)^ng\\.prog_match=(.+)$",
+         "\\1"
+        ]
+       }
+      ],
+      "triggers": [
+       {
+        "uuid": "bab98237a03f5899a86cb445425a3380",
+        "name": "nodeguard running program is not the installed one on {HOST.NAME}",
+        "expression": "max(/Nodeguard by Zabbix agent/nodeguard.kv[prog_match],3m)=0",
+        "priority": "HIGH",
+        "description": "The attached XDP program is not the one reload or attach installed; enforcement provenance unknown."
+       }
+      ]
+     },
+     {
+      "uuid": "6251baaef4d459bf8bac455d1c0067c2",
+      "name": "nodeguard attach mode",
+      "type": "DEPENDENT",
+      "key": "nodeguard.kv[attach_mode]",
+      "delay": "0",
+      "value_type": "TEXT",
+      "description": "native, skb, or none, from xdp-loader status",
+      "history": "31d",
+      "trends": "0",
+      "master_item": {
+       "key": "nodeguard.kv.raw"
+      },
+      "preprocessing": [
+       {
+        "type": "REGEX",
+        "parameters": [
+         "(?m)^ng\\.attach_mode=(.+)$",
+         "\\1"
+        ]
+       }
+      ]
+     },
+     {
+      "uuid": "afb7e48e9c9459a2bcbb11219b78db03",
+      "name": "nodeguard watchdog canary failures",
+      "type": "DEPENDENT",
+      "key": "nodeguard.kv[wd_canary_fail]",
+      "delay": "0",
+      "value_type": "UNSIGNED",
+      "description": "consecutive canary failures at the last completed watchdog cycle (one-cycle lag; triggers use >= so the lag cannot mask a trip)",
+      "history": "31d",
+      "trends": "180d",
+      "master_item": {
+       "key": "nodeguard.kv.raw"
+      },
+      "preprocessing": [
+       {
+        "type": "REGEX",
+        "parameters": [
+         "(?m)^ng\\.wd_canary_fail=(.+)$",
+         "\\1"
+        ]
+       }
+      ]
+     },
+     {
+      "uuid": "53562e40d86d5effa5a972e2de473a41",
+      "name": "nodeguard watchdog lifeline failures",
+      "type": "DEPENDENT",
+      "key": "nodeguard.kv[wd_lifeline_fail]",
+      "delay": "0",
+      "value_type": "UNSIGNED",
+      "description": "consecutive lifeline failures at the last completed watchdog cycle (one-cycle lag)",
+      "history": "31d",
+      "trends": "180d",
+      "master_item": {
+       "key": "nodeguard.kv.raw"
+      },
+      "preprocessing": [
+       {
+        "type": "REGEX",
+        "parameters": [
+         "(?m)^ng\\.wd_lifeline_fail=(.+)$",
+         "\\1"
+        ]
+       }
+      ]
+     },
+     {
+      "uuid": "48550bc91c155dd4ab343f853fa5f7a3",
+      "name": "nodeguard watchdog tool failures",
+      "type": "DEPENDENT",
+      "key": "nodeguard.kv[wd_toolfail]",
+      "delay": "0",
+      "value_type": "UNSIGNED",
+      "description": "consecutive tooling failures at the last completed watchdog cycle (one-cycle lag)",
+      "history": "31d",
+      "trends": "180d",
+      "master_item": {
+       "key": "nodeguard.kv.raw"
+      },
+      "preprocessing": [
+       {
+        "type": "REGEX",
+        "parameters": [
+         "(?m)^ng\\.wd_toolfail=(.+)$",
+         "\\1"
+        ]
+       }
+      ]
+     },
+     {
+      "uuid": "7c1e808205cb5832b507c63d3c57ab9d",
+      "name": "nodeguard watchdog clean cycles",
+      "type": "DEPENDENT",
+      "key": "nodeguard.kv[wd_clean]",
+      "delay": "0",
+      "value_type": "UNSIGNED",
+      "description": "cumulative clean watchdog cycles; a stalled value with the timer active means the cycle is failing",
+      "history": "31d",
+      "trends": "180d",
+      "master_item": {
+       "key": "nodeguard.kv.raw"
+      },
+      "preprocessing": [
+       {
+        "type": "REGEX",
+        "parameters": [
+         "(?m)^ng\\.wd_clean=(.+)$",
+         "\\1"
+        ]
+       }
+      ]
+     },
+     {
+      "uuid": "b6373f13e41754e2bb5f30a90ace8cb9",
+      "name": "nodeguard anomaly count",
+      "type": "DEPENDENT",
+      "key": "nodeguard.kv[anomaly_count]",
+      "delay": "0",
+      "value_type": "UNSIGNED",
+      "description": "cumulative volumetric anomaly trips from the gateway-local EWMA detector",
+      "history": "31d",
+      "trends": "180d",
+      "master_item": {
+       "key": "nodeguard.kv.raw"
+      },
+      "preprocessing": [
+       {
+        "type": "REGEX",
+        "parameters": [
+         "(?m)^ng\\.anomaly_count=(.+)$",
+         "\\1"
+        ]
+       }
+      ],
+      "triggers": [
+       {
+        "uuid": "c9fbdeec95825e09acebcf34bc700b0b",
+        "name": "nodeguard volumetric anomaly detected on {HOST.NAME}",
+        "expression": "change(/Nodeguard by Zabbix agent/nodeguard.kv[anomaly_count])>0",
+        "priority": "HIGH",
+        "description": "The gateway-local EWMA detector tripped: a per-cycle delta exceeded max(floor, mean + K * deviation) for the configured consecutive cycles."
+       }
+      ]
+     },
+     {
+      "uuid": "8ddb73f0281d5f05b493753ebfb6d1e2",
+      "name": "nodeguard anomaly shadow count",
+      "type": "DEPENDENT",
+      "key": "nodeguard.kv[anomaly_shadow_count]",
+      "delay": "0",
+      "value_type": "UNSIGNED",
+      "description": "cumulative shadow-mode trips (logged and exported, no alerting side effects); used to review the training window before promotion",
+      "history": "31d",
+      "trends": "180d",
+      "master_item": {
+       "key": "nodeguard.kv.raw"
+      },
+      "preprocessing": [
+       {
+        "type": "REGEX",
+        "parameters": [
+         "(?m)^ng\\.anomaly_shadow_count=(.+)$",
+         "\\1"
+        ]
+       }
+      ]
+     },
+     {
+      "uuid": "e100d56e2cd2522aba013db8bd6b72fe",
+      "name": "nodeguard last anomaly time",
+      "type": "DEPENDENT",
+      "key": "nodeguard.kv[anomaly_last_ts]",
+      "delay": "0",
+      "value_type": "UNSIGNED",
+      "units": "unixtime",
+      "description": "epoch of the most recent anomaly trip",
+      "history": "31d",
+      "trends": "180d",
+      "master_item": {
+       "key": "nodeguard.kv.raw"
+      },
+      "preprocessing": [
+       {
+        "type": "REGEX",
+        "parameters": [
+         "(?m)^ng\\.anomaly_last_ts=(.+)$",
+         "\\1"
+        ]
+       }
+      ]
+     },
+     {
+      "uuid": "610a3600dbfa5aa1989ba2481396cbf7",
+      "name": "nodeguard sweep timer state",
+      "type": "DEPENDENT",
+      "key": "nodeguard.kv[sweep_timer]",
+      "delay": "0",
+      "value_type": "TEXT",
+      "description": "systemd is-active for nodeguard-sweep.timer (previously exported but untemplated)",
+      "history": "31d",
+      "trends": "0",
+      "master_item": {
+       "key": "nodeguard.kv.raw"
+      },
+      "preprocessing": [
+       {
+        "type": "REGEX",
+        "parameters": [
+         "(?m)^ng\\.sweep_timer=(.+)$",
+         "\\1"
+        ]
+       }
+      ],
+      "triggers": [
+       {
+        "uuid": "095ddf9102cd5ebfbd6934aebd47f4b2",
+        "name": "nodeguard sweep timer is not active on {HOST.NAME}",
+        "expression": "last(/Nodeguard by Zabbix agent/nodeguard.kv[sweep_timer])<>\"active\"",
+        "priority": "WARNING",
+        "description": "Belt-and-braces companion to the sweep_age trigger; the cache will age out while this is inactive."
+       }
+      ]
+     }
+    ],
+    "discovery_rules": [
+     {
+      "uuid": "994fb78410145143a84f0a850339ea64",
+      "name": "nodeguard feeds discovery",
+      "type": "DEPENDENT",
+      "key": "nodeguard.feeds.discovery",
+      "delay": "0",
+      "lifetime": "30d",
+      "description": "Discovers configured feed names from the feeds_last_success_ts_* keys in the kv export (excluding the _min aggregate). Prototype keys are distinct from the static per-feed keys so discovery never collides with them during the parity window.",
+      "item_prototypes": [
+       {
+        "uuid": "8cf7432b5412513fa9412a7c5e0dbb0c",
+        "name": "feed {#FEED} last success",
+        "type": "DEPENDENT",
+        "key": "nodeguard.feed.success_ts[{#FEED}]",
+        "delay": "0",
+        "value_type": "UNSIGNED",
+        "units": "unixtime",
+        "description": "epoch of {#FEED}'s last successful HTTP exchange (discovered)",
+        "history": "31d",
+        "trends": "180d",
+        "master_item": {
+         "key": "nodeguard.kv.raw"
+        },
+        "preprocessing": [
+         {
+          "type": "REGEX",
+          "parameters": [
+           "(?m)^ng\\.feeds_last_success_ts_{#FEED}=(.+)$",
+           "\\1"
+          ]
+         }
+        ]
+       },
+       {
+        "uuid": "9e255c22174c5f7cad74c0c71aca1215",
+        "name": "feed {#FEED} snapshot age",
+        "type": "DEPENDENT",
+        "key": "nodeguard.feed.age[{#FEED}]",
+        "delay": "0",
+        "value_type": "UNSIGNED",
+        "units": "s",
+        "description": "seconds since {#FEED}'s content last changed (discovered)",
+        "history": "31d",
+        "trends": "180d",
+        "master_item": {
+         "key": "nodeguard.kv.raw"
+        },
+        "preprocessing": [
+         {
+          "type": "REGEX",
+          "parameters": [
+           "(?m)^ng\\.feeds_snapshot_age_{#FEED}=(.+)$",
+           "\\1"
+          ]
+         }
+        ]
+       }
+      ],
+      "trigger_prototypes": [
+       {
+        "uuid": "c1a1b17ccd615a4c91ed5dbef8433b25",
+        "name": "nodeguard feed {#FEED} stale (discovered) on {HOST.NAME}",
+        "expression": "last(/Nodeguard by Zabbix agent/nodeguard.feed.success_ts[{#FEED}])>0 and fuzzytime(/Nodeguard by Zabbix agent/nodeguard.feed.success_ts[{#FEED}],46800)=0 and nodata(/Nodeguard by Zabbix agent/nodeguard.feed.success_ts[{#FEED}],2h)=0",
+        "priority": "INFO",
+        "description": "Two full cycles plus margin without a successful exchange. Information severity during the parity window; the nodata guard silences a feed removed from feeds.conf once discovery drops it."
+       },
+       {
+        "uuid": "4dbe70aacf735bf5944285b1164b6d7d",
+        "name": "nodeguard feed {#FEED} failed open (discovered) on {HOST.NAME}",
+        "expression": "last(/Nodeguard by Zabbix agent/nodeguard.feed.success_ts[{#FEED}])>0 and fuzzytime(/Nodeguard by Zabbix agent/nodeguard.feed.success_ts[{#FEED}],93600)=0 and nodata(/Nodeguard by Zabbix agent/nodeguard.feed.success_ts[{#FEED}],2h)=0",
+        "priority": "INFO",
+        "description": "Entries for this feed have expired in-kernel; designed decay, not an outage. Information severity during the parity window; nodata-guarded."
+       },
+       {
+        "uuid": "f6ee371366bf5096a5cf211920d67948",
+        "name": "nodeguard feed {#FEED} upstream frozen (discovered) on {HOST.NAME}",
+        "expression": "last(/Nodeguard by Zabbix agent/nodeguard.feed.age[{#FEED}])>604800 and nodata(/Nodeguard by Zabbix agent/nodeguard.feed.age[{#FEED}],2h)=0",
+        "priority": "INFO",
+        "description": "Upstream unchanged for 7 days. Information severity during the parity window; nodata-guarded."
+       }
+      ],
+      "master_item": {
+       "key": "nodeguard.kv.raw"
+      },
+      "preprocessing": [
+       {
+        "type": "JAVASCRIPT",
+        "parameters": [
+         "var out = [];\nvar re = /^ng\\.feeds_last_success_ts_(?!min=)([A-Za-z0-9_]+)=/gm;\nvar m;\nwhile ((m = re.exec(value)) !== null) {\n  out.push({\"{#FEED}\": m[1]});\n}\nreturn JSON.stringify(out);"
+        ]
+       },
+       {
+        "type": "DISCARD_UNCHANGED_HEARTBEAT",
+        "parameters": [
+         "1h"
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  ],
+  "triggers": [
+   {
+    "uuid": "f1136a906ca659c5a461ce92da339ee2",
+    "name": "nodeguard stats unreadable on {HOST.NAME}",
+    "expression": "last(/Nodeguard by Zabbix agent/nodeguard.kv[stats_read_fail])=1 or nodata(/Nodeguard by Zabbix agent/nodeguard.kv[pass],10m)=1",
+    "priority": "WARNING",
+    "description": "stats_read_fail=1 or the counters are unsupported; XDP counters are unknown, not zero."
+   },
+   {
+    "uuid": "2f053eb114e0596794b8f0db4d549fc8",
+    "name": "suricata alive but counters unreadable on {HOST.NAME}",
+    "expression": "nodata(/Nodeguard by Zabbix agent/nodeguard.kv[kernel_drops],10m)=1 and last(/Nodeguard by Zabbix agent/nodeguard.kv[suricata])=\"active\"",
+    "priority": "WARNING",
+    "description": "Live unit, dead socket: suricata reports active but kernel_drops is unsupported, which ng.suricata alone cannot catch."
+   },
+   {
+    "uuid": "55fcc5c131e45f79b4f92d10461944e6",
+    "name": "nodeguard attached in degraded mode on {HOST.NAME}",
+    "expression": "last(/Nodeguard by Zabbix agent/nodeguard.kv[attach_mode])<>\"native\" and last(/Nodeguard by Zabbix agent/nodeguard.kv[attach_state])=\"attached\"",
+    "priority": "WARNING",
+    "description": "Attached but not in native driver mode; enforcement works with reduced performance headroom."
+   },
+   {
+    "uuid": "4243e73b8c805f83860d4128a6462d27",
+    "name": "nodeguard watchdog approaching trip on {HOST.NAME}",
+    "expression": "last(/Nodeguard by Zabbix agent/nodeguard.kv[wd_canary_fail])>=2 or last(/Nodeguard by Zabbix agent/nodeguard.kv[wd_lifeline_fail])>=2",
+    "priority": "WARNING",
+    "description": "Two consecutive canary or lifeline failures; fires before the watchdog's soft-off trip. >= comparisons so the one-cycle export lag cannot mask a trip."
+   },
+   {
+    "uuid": "496fee73a9f25c899250d34c6dba2b5e",
+    "name": "nodeguard responder dry-run divergence on {HOST.NAME}",
+    "expression": "(last(/Nodeguard by Zabbix agent/nodeguard.kv[resp_dryrun_would_block])-last(/Nodeguard by Zabbix agent/nodeguard.kv[resp_dryrun_would_block],#10))>0 and (last(/Nodeguard by Zabbix agent/nodeguard.kv[resp_blocks_issued])-last(/Nodeguard by Zabbix agent/nodeguard.kv[resp_blocks_issued],#10))=0",
+    "priority": "INFO",
+    "description": "Dry-run would-block is rising while issued blocks are flat: the responder wants to act and is configured not to."
+   }
+  ]
+ }
+}
