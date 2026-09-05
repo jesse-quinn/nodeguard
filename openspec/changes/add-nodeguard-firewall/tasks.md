@@ -26,20 +26,20 @@
 
 ## 2. Phase 0: package install and file deploy (per host, human-driven)
 
-- [ ] 2.1 Install `xdp-tools`, `bpftool`, `suricata`; verify
+- [x] 2.1 Install `xdp-tools`, `bpftool`, `suricata`; verify
       `suricata --build-info` (AF_PACKET, Hyperscan) and SELinux module
       state
-- [ ] 2.2 Deploy artifacts with `deploy.sh`; `restorecon`; verify the
+- [x] 2.2 Deploy artifacts with `deploy.sh`; `restorecon`; verify the
       deployed spec matches the deployed object
 
 ## 3. Phase 1: Suricata shadow (no XDP, no enforcement)
 
-- [ ] 3.1 Apply per-host sysconfig and yaml; on the remote node apply and
+- [x] 3.1 Apply per-host sysconfig and yaml; on the remote node apply and
       assert the NIC offload changes, including after a deliberate
       tailscaled restart
-- [ ] 3.2 Enable suricata and the update timer; verify the unix-command
+- [x] 3.2 Enable suricata and the update timer; verify the unix-command
       socket answers
-- [ ] 3.3 Verify detection end to end from an external vantage and confirm
+- [x] 3.3 Verify detection end to end from an external vantage and confirm
       alert records carry the flow counter fields the responder requires
 - [ ] 3.4 Measure steady and reload-peak RSS; set final memory caps or trim
       the ruleset; watch kernel drops for one to two weeks
@@ -49,7 +49,7 @@
 - [ ] 4.1 Entry gate: create the monitoring items and triggers (attach
       state, kill switch, stats advancing, unit states, IDS restart and
       drift items) before any attach
-- [ ] 4.2 Enable the maps service; verify pins, reconciliation, and the
+- [x] 4.2 Enable the maps service; verify pins, reconciliation, and the
       WireGuard port value
 - [ ] 4.3 First attach on the internet gateway in a scheduled window with a
       dead-man abort; verify link, dispatcher membership, map identity,
