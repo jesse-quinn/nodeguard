@@ -535,6 +535,16 @@
         "description": "Upstream unchanged for 7 days; re-stamp hard-stops at 14 days."
        }
       ]
+     },
+     {
+      "uuid": "d2df9731226948abbf3130b58fc91fb3",
+      "name": "feeds map errors",
+      "key": "nodeguard.kv[feeds_map_errors]",
+      "delay": "1m",
+      "value_type": "UNSIGNED",
+      "description": "per-key bpftool failures this run (one lost key each, never a lost batch)",
+      "history": "31d",
+      "trends": "180d"
      }
     ]
    }

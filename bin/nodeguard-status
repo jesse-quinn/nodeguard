@@ -95,6 +95,12 @@ for k in ("pass", "drop_v4", "drop_v6", "pass_allowlist", "pass_wgport"):
     # stay honest (a tmpfs fragment would false-alarm on every boot).
     if [ -f /var/lib/nodeguard/feeds/feeds.kv ]; then
         cat /var/lib/nodeguard/feeds/feeds.kv
+    else
+        # Pre-first-run defaults so the global items are supported from
+        # day one; per-feed items appear after the first run.
+        for kvk in enforce approved config_approved_mismatch journal_reset                    churn_held last_run_ts entries candidates rejected                    failed map_errors; do
+            echo "ng.feeds_$kvk=0"
+        done
     fi
     exit 0
 fi

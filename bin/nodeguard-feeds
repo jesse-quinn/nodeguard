@@ -16,12 +16,19 @@ SAFETY: ownership lives in this loader's journal plus compare-and-swap
 on the written expiry value under the per-key lock; a live map entry not
 written by this loader is never modified or deleted. The reconcile
 baseline is the journal, never a dump of the block maps (they have other
-writers).
+writers). Permanent entries (expiry 0) are provably foreign in every
+mode, including crash-adoption, because this loader never writes 0.
 
 SAFETY: enforcement needs the double gate: the feed listed in
 FEEDS_APPLY in the deployed config AND present in approved.json, which
 only the interactive `apply --confirm` writes. Everything else is
 dry-run: full diff, zero writes.
+
+SAFETY: fetch metadata (etag, digest, change clock) is persisted only
+after a body passes every validation gate; a 200 that fails validation
+leaves the conditional-GET state untouched, so the next run re-fetches
+the full bad body and the failure keeps alarming instead of being
+masked by 304s against a broken upstream.
 """
 
 import argparse
@@ -34,6 +41,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from email.utils import parsedate_to_datetime
 
 sys.path.insert(0, "/usr/local/lib/nodeguard")
 import ngmap  # noqa: E402
@@ -73,7 +81,6 @@ DEFAULTS = {
     "FEEDS_MAX_CHURN_PCT": "30",
     "FEEDS_MAX_STALE_S": "1209600",
 }
-STALE_WARN_S = 7 * 86400
 MAP_HEADROOM = 0.80
 
 
@@ -96,11 +103,15 @@ def read_kv_file(path, defaults=None):
 
 
 def load_json(path, default):
+    """default for a MISSING file; None for a CORRUPT one, so callers can
+    tell benign first-run absence from damage that must alarm."""
     try:
         with open(path) as f:
             return json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
-        return None if default is None else default
+    except FileNotFoundError:
+        return default
+    except (json.JSONDecodeError, OSError):
+        return None
 
 
 def save_json(path, data):
@@ -119,7 +130,8 @@ def boot_id():
 # ------------------------------------------------------------ fetch layer
 
 def fetch(feed, meta, max_bytes):
-    """Return (status, body_bytes). status: 'ok', '304', 'failed:<why>'."""
+    """Return (status, body, hdrs). Side-effect free on meta: the caller
+    persists conditional-GET state only after full validation."""
     d = FEED_DEFS[feed]
     req = urllib.request.Request(d["url"], headers={
         "User-Agent": "nodeguard-feeds/1.0"})
@@ -131,17 +143,15 @@ def fetch(feed, meta, max_bytes):
         with urllib.request.urlopen(req, timeout=30) as r:
             body = r.read(max_bytes + 1)
             if len(body) > max_bytes:
-                return f"failed:body over {max_bytes} byte cap", None
-            meta["etag"] = r.headers.get("ETag") or meta.get("etag")
-            meta["last_modified"] = (r.headers.get("Last-Modified")
-                                     or meta.get("last_modified"))
-            return "ok", body
+                return f"failed:body over {max_bytes} byte cap", None, {}
+            return "ok", body, {"etag": r.headers.get("ETag"),
+                                "last_modified": r.headers.get("Last-Modified")}
     except urllib.error.HTTPError as e:
         if e.code == 304:
-            return "304", None
-        return f"failed:HTTP {e.code}", None
+            return "304", None, {}
+        return f"failed:HTTP {e.code}", None, {}
     except Exception as e:  # DNS, timeout, TLS
-        return f"failed:{e.__class__.__name__}: {e}", None
+        return f"failed:{e.__class__.__name__}: {e}", None, {}
 
 
 # --------------------------------------------------------------- parsers
@@ -209,16 +219,12 @@ def coverage(nets):
 
 
 def allow_snapshot():
-    """One allow-map snapshot per run; None means undeterminable.
-    SAFETY: an empty family on a deployed host means the allow layer is
-    broken mid-reload; writing feed blocks then risks enforcing against
-    the operator's own paths, so the caller aborts the run."""
+    """One allow-map snapshot per run; None means undeterminable."""
     try:
-        nets = ngmap.allow_entries_live()
+        return ngmap.allow_entries_live()
     except Exception as e:
         log(f"feeds: allow snapshot failed: {e}")
         return None
-    return nets
 
 
 # --------------------------------------------------------------- journal
@@ -235,23 +241,31 @@ def decode_value(raw):
     return struct.unpack("<QQ", raw)
 
 
+class GateAbort(SystemExit):
+    """Run-level refusal from a capacity/coverage gate. Distinct so run()
+    can clear run_in_progress and still exit nonzero: a gate abort wrote
+    nothing, and arming crash-adoption for it would be wrong."""
+
+
 class Runner:
     def __init__(self, conf):
         self.conf = conf
         self.env = read_kv_file(ENV)
         self.canary = self.env.get("CANARY_IP", "")
-        self.state = load_json(STATE, default={})
         self.journal_reset = 0
-        if self.state is None:
+        state = load_json(STATE, default={})
+        if state is None:
             log("feeds: state.json unreadable; insert-only rebuild "
                 "(never delete without proof of ownership)")
-            self.state = {}
+            state = {}
             self.journal_reset = 1
-        self.approved = load_json(APPROVED, default={"feeds": []})
-        if self.approved is None:
+        self.state = state
+        approved = load_json(APPROVED, default={"feeds": []})
+        if approved is None:
             log("feeds: approved.json unreadable; DISARMED until a human "
                 "re-runs apply --confirm")
-            self.approved = {"feeds": []}
+            approved = {"feeds": []}
+        self.approved = approved
         self.state.setdefault("feeds", {})
         self.state.setdefault("entries", {})
         self.ttl = int(conf["FEEDS_TTL_S"])
@@ -261,6 +275,8 @@ class Runner:
         self.rejected = 0
         self.candidates = 0
         self.churn_held = []
+        self.map_errors = 0
+        self.accepted = set()  # feeds whose churn a human just confirmed
         self.boot = boot_id()
         self.prev_boot = self.state.get("boot_id")
         self.adoption = bool(self.state.get("run_in_progress")) \
@@ -276,10 +292,12 @@ class Runner:
         return self.state["feeds"].setdefault(feed, {})
 
     def configured(self):
+        # Design section 3: FEEDS_DRYRUN + FEEDS_APPLY order decides
+        # cross-feed dedupe provenance.
         dry = self.conf["FEEDS_DRYRUN"].split()
         app = self.conf["FEEDS_APPLY"].split()
         out = []
-        for f in app + dry:  # apply order wins dedupe provenance
+        for f in dry + app:
             if f not in out:
                 if f not in FEED_DEFS:
                     log(f"feeds: unknown feed id {f!r} ignored")
@@ -295,12 +313,14 @@ class Runner:
     # ------------------------------------------------------------- fetch
 
     def obtain(self, feed):
-        """Fetch + validate one feed. Returns list[(net, ref)] or None."""
+        """Fetch + validate one feed. Returns list[(net, ref)] or None.
+        Persists etag/digest/change-clock ONLY on full validation."""
         d = FEED_DEFS[feed]
         meta = self.feed_meta(feed)
         os.makedirs(f"{STATE_DIR}/{feed}", exist_ok=True)
         good = f"{STATE_DIR}/{feed}/last-good"
-        status, body = fetch(feed, meta, int(self.conf["FEEDS_MAX_BYTES"]))
+        status, body, hdrs = fetch(feed, meta,
+                                   int(self.conf["FEEDS_MAX_BYTES"]))
         if status == "304":
             try:
                 with open(good, "rb") as f:
@@ -314,27 +334,12 @@ class Runner:
             self.dline(f"FAILED {feed}: {status}")
             return None
 
-        # frozen-upstream cap: a chain of 304s or identical bodies never
-        # advances last_changed_ts; past the hard cap the feed FAILS even
-        # though the exchange succeeded (no indefinite stale enforcement).
-        digest = hashlib.sha256(body).hexdigest()
-        if status == "ok" and digest != meta.get("last_digest"):
-            meta["last_digest"] = digest
-            meta["last_changed_ts"] = self.now
-        meta.setdefault("last_changed_ts", self.now)
-        if self.now - meta["last_changed_ts"] > int(self.conf["FEEDS_MAX_STALE_S"]):
-            self.failed.append(feed)
-            self.dline(f"FAILED {feed}: upstream frozen past "
-                       f"{self.conf['FEEDS_MAX_STALE_S']}s; entries decay")
-            return None
-
         try:
             records, attribution = PARSERS[d["kind"]](body)
         except (ValueError, json.JSONDecodeError, UnicodeDecodeError) as e:
             self.failed.append(feed)
             self.dline(f"FAILED {feed}: validation: {e}")
-            bad = f"{STATE_DIR}/{feed}/last-bad"
-            with open(bad, "wb") as f:
+            with open(f"{STATE_DIR}/{feed}/last-bad", "wb") as f:
                 f.write(body)
             return None
 
@@ -345,17 +350,46 @@ class Runner:
             self.dline(f"FAILED {feed}: {len(records)} records outside "
                        f"[{lo}, {hi}]")
             return None
-
         for net, _ in records:
             if net.version != d["family"]:
                 self.failed.append(feed)
                 self.dline(f"FAILED {feed}: {net} wrong address family")
                 return None
 
-        tmp = good + ".tmp"
-        with open(tmp, "wb") as f:
-            f.write(body)
-        os.replace(tmp, good)
+        # Validation passed: only now touch the change clock and the
+        # conditional-GET state. Ordering: a differing valid body resets
+        # the frozen clock in the same run, so recovery after a freeze is
+        # accepted rather than rejected as stale.
+        digest = hashlib.sha256(body).hexdigest()
+        if status == "ok" and digest != meta.get("last_digest"):
+            meta["last_digest"] = digest
+            meta["last_changed_ts"] = self.now
+            if hdrs.get("last_modified"):
+                try:
+                    meta["last_changed_ts"] = min(
+                        self.now,
+                        parsedate_to_datetime(
+                            hdrs["last_modified"]).timestamp())
+                except (TypeError, ValueError):
+                    pass
+        if meta.get("last_changed_ts") and \
+                self.now - meta["last_changed_ts"] > \
+                int(self.conf["FEEDS_MAX_STALE_S"]):
+            self.failed.append(feed)
+            self.dline(f"FAILED {feed}: upstream frozen past "
+                       f"{self.conf['FEEDS_MAX_STALE_S']}s; entries decay")
+            return None
+        meta.setdefault("last_changed_ts", self.now)
+
+        if status == "ok":
+            tmp = good + ".tmp"
+            with open(tmp, "wb") as f:
+                f.write(body)
+            os.replace(tmp, good)
+            if hdrs.get("etag"):
+                meta["etag"] = hdrs["etag"]
+            if hdrs.get("last_modified"):
+                meta["last_modified"] = hdrs["last_modified"]
         meta["attribution"] = attribution  # Spamhaus (c) kept with snapshot
         meta["last_success_ts"] = self.now
         return records
@@ -363,40 +397,43 @@ class Runner:
     # -------------------------------------------------------------- gate
 
     def gate(self, per_feed, allow):
-        """Dedupe, floors, canary, protected, capacity, coverage, churn.
-        Mutates per_feed to the surviving desired sets."""
+        """Two passes: per-feed validity (floors, canary) first, then
+        dedupe and protected checks across the SURVIVORS only, so a feed
+        that fails can never have claimed a key another feed then treats
+        as not-desired (which would trigger a cross-feed withdrawal of a
+        live entry)."""
         v6_floor = int(self.conf["FEEDS_V6_FLOOR"])
-        seen = {}
+
         for feed in list(per_feed):
-            desired = {}
-            for net, ref in per_feed[feed]:
+            for net, _ in per_feed[feed]:
                 self.candidates += 1
+                bad = None
                 if net.version == 4 and net.prefixlen < 8:
-                    self.failed.append(feed)
-                    self.dline(f"FAILED {feed}: {net} shorter than /8")
-                    del per_feed[feed]
-                    break
-                if net.version == 6 and net.prefixlen < v6_floor:
-                    self.failed.append(feed)
-                    self.dline(f"FAILED {feed}: {net} shorter than "
-                               f"/{v6_floor}")
-                    del per_feed[feed]
-                    break
-                # SAFETY: canary coverage is a run-level anomaly for the
-                # feed, never a per-entry drop; silently removing the one
-                # entry able to trip the watchdog canary while keeping
-                # the rest of an anomalous feed would blind the tripwire.
-                if self.canary:
+                    bad = f"{net} shorter than /8"
+                elif net.version == 6 and net.prefixlen < v6_floor:
+                    bad = f"{net} shorter than /{v6_floor}"
+                elif self.canary:
+                    # SAFETY: canary coverage is a run-level anomaly for
+                    # the whole feed, never a per-entry drop; silently
+                    # removing the one entry able to trip the watchdog
+                    # canary while keeping the rest would blind the
+                    # tripwire.
                     c = ipaddress.ip_address(self.canary)
                     if c.version == net.version and c in net:
-                        self.failed.append(feed)
-                        self.dline(f"FAILED {feed}: {net} covers the "
-                                   f"canary {self.canary}; entire feed "
-                                   "refused this run")
-                        del per_feed[feed]
-                        break
+                        bad = (f"{net} covers the canary {self.canary}; "
+                               "entire feed refused this run")
+                if bad:
+                    self.failed.append(feed)
+                    self.dline(f"FAILED {feed}: {bad}")
+                    del per_feed[feed]
+                    break
+
+        seen = set()
+        for feed in per_feed:
+            desired = {}
+            for net, ref in per_feed[feed]:
                 if jkey(net) in seen:
-                    continue  # first feed in order owns it
+                    continue  # first surviving feed in order owns it
                 reason = ngmap.is_protected(str(net.network_address), allow)
                 if reason is None:
                     p = ngmap.contains_protected(net, allow)
@@ -406,10 +443,9 @@ class Runner:
                     self.rejected += 1
                     self.dline(f"reject {feed} {net}: {reason}")
                     continue
-                seen[jkey(net)] = feed
+                seen.add(jkey(net))
                 desired[jkey(net)] = (net, ref)
-            else:
-                per_feed[feed] = desired
+            per_feed[feed] = desired
 
         # capacity and aggregate coverage, across all surviving feeds
         all_nets = [net for d in per_feed.values() for net, _ in d.values()]
@@ -417,53 +453,77 @@ class Runner:
         n6 = sum(1 for n in all_nets if n.version == 6)
         if n4 > int(self.conf["FEEDS_MAX_V4"]) or \
                 n6 > int(self.conf["FEEDS_MAX_V6"]):
-            raise SystemExit(f"feeds: entry caps exceeded (v4={n4} v6={n6})")
+            raise GateAbort(f"feeds: entry caps exceeded (v4={n4} v6={n6})")
         cov4, cov6 = coverage(all_nets)
         if cov4 > int(self.conf["FEEDS_MAX_COVERAGE_V4"]):
-            raise SystemExit(
+            raise GateAbort(
                 f"feeds: v4 coverage {cov4} addresses exceeds cap; a "
                 "validity-passing feed of broad aggregates would black-hole "
                 "inbound; refusing the run")
         if cov6 > int(self.conf["FEEDS_MAX_COVERAGE_V6_48"]):
-            raise SystemExit(f"feeds: v6 coverage {cov6} /48-equivalents "
-                             "exceeds cap; refusing the run")
+            raise GateAbort(f"feeds: v6 coverage {cov6} /48-equivalents "
+                            "exceeds cap; refusing the run")
+        # headroom: count planned INSERTS (desired minus already-owned),
+        # not the whole desired set, or refreshes double-count.
+        owned = set(self.state["entries"].keys())
         for kind, path, cap in (("v4", f"{ngmap.PIN}/block4", 65536),
                                 ("v6", f"{ngmap.PIN}/block6", 16384)):
+            fam = 4 if kind == "v4" else 6
+            planned = sum(1 for d in per_feed.values()
+                          for k, (n, _) in d.items()
+                          if n.version == fam and k not in owned)
             live = sum(1 for _ in ngmap.dump_map(path))
-            planned = n4 if kind == "v4" else n6
             if live + planned > cap * MAP_HEADROOM:
-                raise SystemExit(
-                    f"feeds: {kind} map would exceed {int(cap * MAP_HEADROOM)}"
-                    f" entries (live {live} + planned {planned}); responder "
-                    "headroom preserved; refusing the run")
+                raise GateAbort(
+                    f"feeds: {kind} map would exceed "
+                    f"{int(cap * MAP_HEADROOM)} entries (live {live} + "
+                    f"planned {planned}); responder headroom preserved; "
+                    "refusing the run")
 
-        # churn brake, per feed, against the last APPLIED baseline
+        # churn brake, per feed, against the last APPLIED baseline; both
+        # arms (entry symmetric difference AND covered-space delta). A
+        # feed the operator just accepted via apply --confirm bypasses
+        # the brake for exactly this run and is re-baselined on success.
         pct = int(self.conf["FEEDS_MAX_CHURN_PCT"])
         for feed, desired in per_feed.items():
             base = self.feed_meta(feed).get("applied_cidrs")
-            if base is None or not self.enforcing(feed):
-                continue  # first enforcing run baselines via apply --confirm
+            if base is None or feed in self.accepted \
+                    or not self.enforcing(feed):
+                continue
             bset = set(base)
             dset = set(desired.keys())
-            delta = len(bset ^ dset)
-            if bset and delta * 100 > pct * len(bset):
+            delta_n = len(bset ^ dset)
+            delta_nets = [ipaddress.ip_network(c) for c in (bset ^ dset)]
+            base_nets = [ipaddress.ip_network(c) for c in bset]
+            dcov = sum(coverage(delta_nets))
+            bcov = sum(coverage(base_nets))
+            if bset and (delta_n * 100 > pct * len(bset)
+                         or (bcov and dcov * 100 > pct * bcov)):
                 self.churn_held.append(feed)
-                self.dline(f"CHURN-HELD {feed}: symmetric difference "
-                           f"{delta} exceeds {pct} percent of baseline "
-                           f"{len(bset)}; refreshes only until "
-                           "apply --confirm")
+                self.dline(f"CHURN-HELD {feed}: entry delta {delta_n} or "
+                           f"coverage delta {dcov} exceeds {pct} percent "
+                           f"of baseline ({len(bset)} entries, {bcov} "
+                           "coverage); refreshes only until apply --confirm")
 
     # --------------------------------------------------------- reconcile
 
+    def _mutate(self, fn, feed, k):
+        """SAFETY: one bpftool failure costs one key, never the batch;
+        nothing here can skip a guard, only skip a write."""
+        try:
+            fn()
+        except RuntimeError as e:
+            self.map_errors += 1
+            self.dline(f"map-error {feed} {k}: {e}")
+
     def reconcile(self, feed, desired, enforce):
-        """Insert/refresh/withdraw for one feed. Design section 4."""
         entries = self.state["entries"]
         mine = {k: v for k, v in entries.items() if v.get("feed") == feed}
         planned = {"insert": [], "refresh": [], "withdraw": [], "skip": []}
         held = feed in self.churn_held
         expiry = ngmap.mono_ns() + self.ttl * 10 ** 9
 
-        for k, (net, ref) in desired.items():
+        for k in desired:
             if k in mine:
                 planned["refresh"].append(k)
             elif not held:
@@ -474,8 +534,8 @@ class Runner:
                     planned["withdraw"].append(k)
         # INVARIANT W1, asserted mechanically:
         if feed in self.failed and planned["withdraw"]:
-            raise SystemExit(f"feeds: BUG: FAILED feed {feed} planned "
-                             "withdrawals; refusing the run")
+            raise GateAbort(f"feeds: BUG: FAILED feed {feed} planned "
+                            "withdrawals; refusing the run")
 
         if not enforce:
             for verb in ("insert", "refresh", "withdraw"):
@@ -484,7 +544,8 @@ class Runner:
             return {v: len(planned[v]) for v in planned}
 
         counts = {"insert": 0, "refresh": 0, "withdraw": 0, "skip": 0}
-        for k in planned["insert"] + planned["refresh"]:
+
+        def one_key(k):
             net, ref = desired[k]
             path = ngmap.map_path(net, "block")
             keyb = ngmap.key_bytes(net)
@@ -501,22 +562,18 @@ class Runner:
                                    last_written=self.now, ref=ref)
                         counts["refresh"] += 1
                     else:
-                        # another writer owns it now; forfeit the claim
                         del entries[k]
                         counts["skip"] += 1
                         self.dline(f"skip {feed} {k}: foreign live entry")
-                    continue
+                    return
                 if row is not None and cur is None:
-                    # previously owned, swept away (outage, toggle):
-                    # re-insert in this same run, not next cycle
                     ngmap.update_map(path, keyb, encode_value(expiry, 0))
                     row.update(written_expiry_ns=expiry,
                                last_written=self.now, ref=ref)
                     counts["insert"] += 1
                     log(f"feeds: previously-owned key {k} absent, "
                         "re-inserting; allowlist to suppress")
-                    continue
-                # no journal row
+                    return
                 if cur is None:
                     ngmap.update_map(path, keyb, encode_value(expiry, 0))
                     entries[k] = {"feed": feed, "ref": ref,
@@ -524,7 +581,7 @@ class Runner:
                                   "first_seen": self.now,
                                   "last_written": self.now}
                     counts["insert"] += 1
-                    continue
+                    return
                 cur_exp, cur_hits = decode_value(cur)
                 if cur_exp and ngmap.mono_ns() >= cur_exp:
                     # expired corpse enforces nothing for anyone: adopt
@@ -534,9 +591,11 @@ class Runner:
                                   "first_seen": self.now,
                                   "last_written": self.now}
                     counts["insert"] += 1
-                elif self.adoption:
-                    # crash-flagged run: a live entry exactly matching a
-                    # desired CIDR with no journal row was probably ours
+                elif self.adoption and cur_exp != 0:
+                    # crash-flagged run: a live TTL entry exactly matching
+                    # a desired CIDR with no journal row was probably ours.
+                    # A permanent (expiry 0) entry is provably NOT ours:
+                    # this loader never writes 0; never adopt those.
                     ngmap.update_map(path, keyb,
                                      encode_value(expiry, cur_hits))
                     entries[k] = {"feed": feed, "ref": ref,
@@ -551,10 +610,13 @@ class Runner:
             finally:
                 lock.close()
 
-        for k in planned["withdraw"]:
+        for k in planned["insert"] + planned["refresh"]:
+            self._mutate(lambda k=k: one_key(k), feed, k)
+
+        def withdraw_key(k):
             row = entries.get(k)
             if row is None:
-                continue
+                return
             net = ipaddress.ip_network(k)
             path = ngmap.map_path(net, "block")
             keyb = ngmap.key_bytes(net)
@@ -569,6 +631,9 @@ class Runner:
                 del entries[k]
             finally:
                 lock.close()
+
+        for k in planned["withdraw"]:
+            self._mutate(lambda k=k: withdraw_key(k), feed, k)
         return counts
 
     # --------------------------------------------------------------- run
@@ -576,22 +641,37 @@ class Runner:
     def run(self):
         feeds = self.configured()
         allow = allow_snapshot()
-        if allow is None or not any(n.version == 4 for n in allow):
-            log("feeds: allow snapshot unavailable or v4-empty; aborting "
-                "the run with no writes (allow-before-block masking would "
-                "be absent)")
+        fams_needed = {FEED_DEFS[f]["family"] for f in feeds}
+        allow_fams = {n.version for n in (allow or [])}
+        if allow is None or not fams_needed <= allow_fams:
+            log("feeds: allow snapshot unavailable or empty for a needed "
+                f"family (need {sorted(fams_needed)}, have "
+                f"{sorted(allow_fams)}); aborting with no writes "
+                "(allow-before-block masking would be absent)")
             self.failed = list(feeds)
             self.finish(feeds)
             return 1
 
         self.state["run_in_progress"] = True
         save_json(STATE, self.state)
+        try:
+            return self._run_inner(feeds, allow)
+        except SystemExit as e:
+            # A gate abort wrote nothing (gates precede every write), so
+            # crash-adoption must NOT arm, and the kv/diff must still
+            # land so the failure alarms instead of vanishing.
+            log(f"feeds: run refused: {e}")
+            self.failed = sorted(set(self.failed) | set(feeds))
+            self.state["run_in_progress"] = False
+            save_json(STATE, self.state)
+            self.finish(feeds)
+            return 1
 
+    def _run_inner(self, feeds, allow):
         reboot = self.prev_boot is not None and self.prev_boot != self.boot
         if reboot:
-            # maps were wiped and CLOCK_MONOTONIC restarted: withdrawals
-            # would find nothing and expiry comparisons are meaningless;
-            # drop every journal row and write the desired sets fresh.
+            # maps wiped, CLOCK_MONOTONIC restarted: withdrawals would
+            # find nothing and expiry comparisons are meaningless.
             log("feeds: boot id changed; journal rows dropped, fresh write")
             self.state["entries"] = {}
         self.state["boot_id"] = self.boot
@@ -622,7 +702,7 @@ class Runner:
         self.state["run_in_progress"] = False
         save_json(STATE, self.state)
         self.finish(feeds, summary)
-        return 1 if self.failed else 0
+        return 1 if (self.failed or self.map_errors) else 0
 
     def finish(self, feeds, summary=None):
         os.makedirs(STATE_DIR, exist_ok=True)
@@ -633,7 +713,8 @@ class Runner:
         for feed, s in (summary or {}).items():
             log(f"feeds: SUMMARY {feed}: {s}")
         for ln in self.diff_lines:
-            if ln.startswith(("reject", "FAILED", "CHURN-HELD", "adopted")):
+            if ln.startswith(("reject", "FAILED", "CHURN-HELD", "adopted",
+                              "map-error")):
                 log(f"feeds: {ln}")
         self.write_kv(feeds)
 
@@ -654,7 +735,8 @@ class Runner:
             f"ng.feeds_entries={len(self.state.get('entries', {}))}",
             f"ng.feeds_candidates={self.candidates}",
             f"ng.feeds_rejected={self.rejected}",
-            f"ng.feeds_failed={len(self.failed)}",
+            f"ng.feeds_failed={len(set(self.failed))}",
+            f"ng.feeds_map_errors={self.map_errors}",
         ]
         succ = []
         for feed in feeds:
@@ -672,17 +754,15 @@ class Runner:
 
 # ----------------------------------------------------------------- modes
 
-def mode_run(conf, _a):
-    return Runner(conf).run()
-
-
-def mode_diff(conf, _a):
+def pending_diff(conf):
+    """Recompute the pending diff from last-good snapshots, no fetching.
+    Returns (runner, rc)."""
     r = Runner(conf)
     feeds = r.configured()
     allow = allow_snapshot()
     if allow is None:
         log("feeds: allow snapshot unavailable")
-        return 1
+        return r, 1
     per_feed = {}
     for feed in feeds:
         good = f"{STATE_DIR}/{feed}/last-good"
@@ -697,11 +777,25 @@ def mode_diff(conf, _a):
             per_feed[feed] = recs
         except ValueError as e:
             log(f"feeds: {feed}: snapshot invalid: {e}")
-    r.gate(per_feed, allow)
+            r.failed.append(feed)
+    try:
+        r.gate(per_feed, allow)
+    except SystemExit as e:
+        log(f"feeds: gate refused: {e}")
+        return r, 1
     for feed, desired in per_feed.items():
         r.reconcile(feed, desired, enforce=False)
     print("\n".join(r.diff_lines) or "(no pending changes)")
-    return 0
+    return r, 1 if r.failed else 0
+
+
+def mode_run(conf, _a):
+    return Runner(conf).run()
+
+
+def mode_diff(conf, _a):
+    _r, rc = pending_diff(conf)
+    return rc
 
 
 def mode_apply(conf, a):
@@ -711,20 +805,32 @@ def mode_apply(conf, a):
         raise SystemExit("apply requires the literal --confirm flag")
     if a.feed not in FEED_DEFS:
         raise SystemExit(f"unknown feed {a.feed}")
-    approved = load_json(APPROVED, default={"feeds": []}) or {"feeds": []}
+    # Show what the operator is confirming BEFORE recording approval:
+    # the pending diff from the reviewed snapshots, not a fresh fetch.
+    log(f"feeds: pending diff for review ({a.feed} highlighted):")
+    _r, _rc = pending_diff(conf)
+    approved = load_json(APPROVED, default={"feeds": []})
+    if approved is None:
+        approved = {"feeds": []}
     if a.feed not in approved["feeds"]:
         approved["feeds"].append(a.feed)
     approved[f"approved_ts_{a.feed}"] = time.time()
     save_json(APPROVED, approved)
-    log(f"feeds: {a.feed} APPROVED; baseline and first enforcing "
-        "reconcile follow")
+    log(f"feeds: {a.feed} APPROVED; first enforcing reconcile follows "
+        "under every gate")
     r = Runner(conf)
-    if a.feed in r.churn_held:
-        r.churn_held.remove(a.feed)
-    # re-baseline then run the full pipeline so the first enforcing
-    # reconcile happens under every gate
     r.approved = approved
+    # SAFETY: the churn brake is bypassed for exactly this feed on
+    # exactly this run; the baseline is rewritten only by a successful
+    # enforcing reconcile, so a failed confirm run leaves the old
+    # baseline (and the hold) in place.
+    r.accepted = {a.feed}
     rc = r.run()
+    if a.feed in r.churn_held or a.feed in r.failed:
+        log(f"feeds: CONFIRM DID NOT COMPLETE for {a.feed}: "
+            f"{'still churn-held' if a.feed in r.churn_held else 'run FAILED'}; "
+            "approval recorded but the baseline is unchanged")
+        return 1
     print(open(DIFF).read())
     return rc
 
@@ -750,11 +856,13 @@ def mode_withdraw(conf, a):
                     ngmap.delete_key(path, keyb)
                     n += 1
             del entries[k]
+        except RuntimeError as e:
+            log(f"feeds: withdraw map-error {k}: {e}")
         finally:
             lock.close()
     if a.feed:
-        approved = load_json(APPROVED, default={"feeds": []}) or {"feeds": []}
-        if a.feed in approved.get("feeds", []):
+        approved = load_json(APPROVED, default={"feeds": []})
+        if approved and a.feed in approved.get("feeds", []):
             approved["feeds"].remove(a.feed)
             save_json(APPROVED, approved)
             log(f"feeds: {a.feed} approval REVOKED")
