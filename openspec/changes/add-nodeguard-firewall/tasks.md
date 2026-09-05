@@ -59,7 +59,7 @@
 - [x] 4.5 Functional drop test with real routable traffic: block a test
       source, prove the drop with xdpdump and counters, prove in-kernel
       expiry and sweep collection
-- [ ] 4.6 Attach on the remote node via the self-recovering canary wrapper;
+- [x] 4.6 Attach on the remote node via the self-recovering canary wrapper;
       run its return-traffic drop test against its own pin set
 - [x] 4.7 Enable the sweep and watchdog timers
 - [ ] 4.8 Exit gate alarm drill: prove the kill-switch and attach-state
