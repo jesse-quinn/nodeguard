@@ -40,8 +40,10 @@ def main():
 
     with open(args.params) as f:
         h = json.load(f)
-    for req in ("iface", "home_net", "threads", "ring_size",
-                "management_cpus", "worker_cpus"):
+    required = ("home_net", "management_cpus", "worker_cpus")
+    if "interfaces" not in h:
+        required = required + ("iface", "threads", "ring_size")
+    for req in required:
         if req not in h:
             sys.exit(f"mkyaml: {args.params} missing required key '{req}'")
 
@@ -50,18 +52,36 @@ def main():
 
     cfg["vars"]["address-groups"]["HOME_NET"] = h["home_net"]
 
-    afp = {
-        "interface": h["iface"],
-        "threads": h["threads"],
-        "cluster-id": h.get("cluster_id", 99),
-        "cluster-type": "cluster_flow",
-        "defrag": True,
-        "tpacket-v3": True,
-        "ring-size": h["ring_size"],
-    }
-    if h.get("bpf_filter"):
-        afp["bpf-filter"] = h["bpf_filter"]
-    cfg["af-packet"] = [afp]
+    # Either a single-interface legacy params file, or "interfaces": a
+    # list of per-interface dicts (iface, threads, cluster_id, ring_size,
+    # optional bpf_filter). Every interface needs a DISTINCT cluster_id;
+    # duplicate ids on one host join a shared fanout group and split
+    # flows between captures.
+    ifaces = h.get("interfaces") or [{
+        "iface": h["iface"], "threads": h["threads"],
+        "cluster_id": h.get("cluster_id", 99),
+        "ring_size": h["ring_size"], "bpf_filter": h.get("bpf_filter"),
+    }]
+    seen_ids = set()
+    afp_list = []
+    for i in ifaces:
+        cid = i.get("cluster_id", 99)
+        if cid in seen_ids:
+            sys.exit(f"mkyaml: duplicate cluster_id {cid} in {args.params}")
+        seen_ids.add(cid)
+        afp = {
+            "interface": i["iface"],
+            "threads": i["threads"],
+            "cluster-id": cid,
+            "cluster-type": "cluster_flow",
+            "defrag": True,
+            "tpacket-v3": True,
+            "ring-size": i["ring_size"],
+        }
+        if i.get("bpf_filter"):
+            afp["bpf-filter"] = i["bpf_filter"]
+        afp_list.append(afp)
+    cfg["af-packet"] = afp_list
 
     cfg["threading"] = {
         "set-cpu-affinity": True,
