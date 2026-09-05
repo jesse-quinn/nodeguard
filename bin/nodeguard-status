@@ -91,6 +91,11 @@ for k in ("pass", "drop_v4", "drop_v6", "pass_allowlist", "pass_wgport"):
     echo "ng.watchdog_timer=$wd_timer"
     echo "ng.sweep_timer=$sw_timer"
     echo "ng.kernel_drops=${kdrops:-0}"
+    # Feed loader state, persisted across reboot so staleness triggers
+    # stay honest (a tmpfs fragment would false-alarm on every boot).
+    if [ -f /var/lib/nodeguard/feeds/feeds.kv ]; then
+        cat /var/lib/nodeguard/feeds/feeds.kv
+    fi
     exit 0
 fi
 

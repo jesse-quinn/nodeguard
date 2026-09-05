@@ -148,8 +148,9 @@ def delete_key(path, key):
     except RuntimeError as e:
         if "No such file or directory" in str(e) or "ENOENT" in str(e):
             if not os.path.exists(path):
-                die(f"map {path} is not pinned; is nodeguard-maps.service "
-                    "running?")
+                raise RuntimeError(
+                    f"map {path} is not pinned; is nodeguard-maps.service "
+                    "running?") from e
             return False  # key already gone; tolerated by contract
         raise
     return True
@@ -175,6 +176,17 @@ def allow_entries_live():
         for k, _ in dump_map(path):
             nets.append(decode_key(k))
     return nets
+
+
+def contains_protected(net, extra_nets=()):
+    """A protected range fully contained inside net, or None.
+    INVARIANT: the single containment check for both cmd_block and the
+    feeds loader; a broad CIDR that would swallow a never-block or
+    allowlisted range is refused here."""
+    for p in list(NEVER_BLOCK) + list(extra_nets):
+        if p.version == net.version and p.subnet_of(net):
+            return p
+    return None
 
 
 def is_protected(addr, extra_nets=()):
@@ -203,11 +215,9 @@ def cmd_block(a):
             "enforces nothing; permanent blocks require --permanent --i-mean-it")
     reason = is_protected(net.network_address, allow_entries_live())
     if reason is None and net.prefixlen < net.max_prefixlen:
-        # For a CIDR, also refuse if it CONTAINS a protected range.
-        for p in NEVER_BLOCK + allow_entries_live():
-            if p.version == net.version and p.subnet_of(net):
-                reason = f"contains protected range {p}"
-                break
+        p = contains_protected(net, allow_entries_live())
+        if p is not None:
+            reason = f"contains protected range {p}"
     if reason:
         die(f"refusing to block {net}: {reason}")
     expiry = 0 if a.permanent else mono_ns() + a.ttl * 10**9

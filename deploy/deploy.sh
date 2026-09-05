@@ -16,7 +16,7 @@ REPO="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="$REPO/build/out"
 
 [ -d "$HOSTDIR" ] || { echo "no such host config dir: $HOSTDIR"; exit 2; }
-for f in nodeguard.env allow4.txt allow6.txt responder.conf \
+for f in nodeguard.env allow4.txt allow6.txt responder.conf feeds.conf \
          sysconfig-suricata suricata-50-limits.conf \
          nodeguard-xdp-10-device.conf suricata.yaml; do
     [ -f "$HOSTDIR/$f" ] || { echo "missing $HOSTDIR/$f (suricata.yaml comes from build.sh)"; exit 2; }
@@ -34,12 +34,13 @@ scp -q "$OUT/nodeguard_kern.o" "$OUT/nodeguard-maps.spec" \
     "$REPO"/bin/nodeguard-detach "$REPO"/bin/nodeguard-cli \
     "$REPO"/bin/nodeguard-status "$REPO"/bin/nodeguard-reload \
     "$REPO"/bin/nodeguard-watchdog "$REPO"/bin/nodeguard-canary \
-    "$REPO"/bin/nodeguard-responder \
+    "$REPO"/bin/nodeguard-responder "$REPO"/bin/nodeguard-feeds \
     "$REPO"/units/*.service "$REPO"/units/*.timer \
     "$REPO"/etc/protected.conf "$REPO"/etc/sids.conf \
     "$REPO"/etc/tmpfiles-nodeguard.conf "$REPO"/etc/logrotate-suricata.conf \
     "$HOSTDIR"/nodeguard.env "$HOSTDIR"/allow4.txt "$HOSTDIR"/allow6.txt \
-    "$HOSTDIR"/responder.conf "$HOSTDIR"/sysconfig-suricata \
+    "$HOSTDIR"/responder.conf "$HOSTDIR"/feeds.conf \
+    "$HOSTDIR"/sysconfig-suricata \
     "$HOSTDIR"/suricata-50-limits.conf "$HOSTDIR"/nodeguard-xdp-10-device.conf \
     "$HOSTDIR"/suricata.yaml \
     "$SSH:$STAGE/"
@@ -53,14 +54,14 @@ S=/tmp/nodeguard-deploy
 # a run from half-installing.
 [ -d /etc/suricata ] || { echo "ERROR: /etc/suricata missing; install the suricata RPM first (phase 0: dnf install suricata), then re-run deploy.sh" >&2; exit 3; }
 
-install -d -m 0755 /usr/local/lib/nodeguard /etc/nodeguard /var/lib/nodeguard
+install -d -m 0755 /usr/local/lib/nodeguard /etc/nodeguard /var/lib/nodeguard /var/lib/nodeguard/feeds
 install -m 0644 "$S/nodeguard_kern.o" "$S/nodeguard-maps.spec" /usr/local/lib/nodeguard/
 install -m 0755 "$S/ngmap.py" /usr/local/lib/nodeguard/
 install -m 0644 "$S/nodeguard-lib.sh" /usr/local/lib/nodeguard/
 
 for f in nodeguard-maps nodeguard-attach nodeguard-detach nodeguard-cli \
          nodeguard-status nodeguard-reload nodeguard-watchdog \
-         nodeguard-canary nodeguard-responder; do
+         nodeguard-canary nodeguard-responder nodeguard-feeds; do
     install -m 0755 "$S/$f" /usr/local/sbin/
 done
 for name in block unblock list flush off on; do
@@ -68,7 +69,7 @@ for name in block unblock list flush off on; do
 done
 
 install -m 0644 "$S/nodeguard.env" "$S/allow4.txt" "$S/allow6.txt" \
-    "$S/responder.conf" "$S/protected.conf" "$S/sids.conf" /etc/nodeguard/
+    "$S/responder.conf" "$S/feeds.conf" "$S/protected.conf" "$S/sids.conf" /etc/nodeguard/
 
 install -m 0644 "$S"/nodeguard-*.service "$S"/nodeguard-*.timer \
     "$S"/suricata-update.service "$S"/suricata-update.timer \
@@ -102,11 +103,12 @@ for f in /usr/local/sbin/nodeguard-maps /usr/local/sbin/nodeguard-attach \
          /usr/local/sbin/nodeguard-watchdog /usr/local/sbin/nodeguard-canary; do
     bash -n "$f"
 done
-python3 -m py_compile /usr/local/lib/nodeguard/ngmap.py /usr/local/sbin/nodeguard-responder
+python3 -m py_compile /usr/local/lib/nodeguard/ngmap.py /usr/local/sbin/nodeguard-responder /usr/local/sbin/nodeguard-feeds
 verify_fail=0
 for u in nodeguard-maps.service nodeguard-xdp.service nodeguard-responder.service \
          nodeguard-sweep.service nodeguard-watchdog.service suricata-update.service \
-         nodeguard-sweep.timer nodeguard-watchdog.timer suricata-update.timer; do
+         nodeguard-feeds.service nodeguard-sweep.timer nodeguard-watchdog.timer \
+         suricata-update.timer nodeguard-feeds.timer; do
     out=$(systemd-analyze verify "/etc/systemd/system/$u" 2>&1 | grep -v 'Unit is bound' || true)
     if [ -n "$out" ]; then
         echo "UNIT VERIFY FAILED: $u"

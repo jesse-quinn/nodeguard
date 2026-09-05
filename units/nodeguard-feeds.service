@@ -1,0 +1,8 @@
+[Unit]
+Description=nodeguard threat-intel feed load (dry-run unless double-gated)
+After=network-online.target nodeguard-maps.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/nodeguard-feeds run

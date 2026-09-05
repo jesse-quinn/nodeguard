@@ -1,0 +1,12 @@
+[Unit]
+Description=Run nodeguard-feeds every 6 hours
+# NOTE: Persistent= applies only to OnCalendar timers; the prompt
+# post-downtime run here comes from OnBootSec.
+
+[Timer]
+OnBootSec=15min
+OnUnitActiveSec=6h
+RandomizedDelaySec=15min
+
+[Install]
+WantedBy=timers.target

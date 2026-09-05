@@ -254,6 +254,287 @@
         ]
        }
       ]
+     },
+     {
+      "uuid": "469db10dc9f74a2dabb71ce687073df6",
+      "name": "feeds enforce",
+      "key": "nodeguard.kv[feeds_enforce]",
+      "delay": "1m",
+      "value_type": "UNSIGNED",
+      "description": "1 = FEEDS_ENFORCE=yes in the deployed config",
+      "history": "31d",
+      "trends": "180d"
+     },
+     {
+      "uuid": "42aee36625a94b28b330dcd298a3d95c",
+      "name": "feeds approved count",
+      "key": "nodeguard.kv[feeds_approved]",
+      "delay": "1m",
+      "value_type": "UNSIGNED",
+      "description": "feeds recorded in approved.json",
+      "history": "31d",
+      "trends": "180d"
+     },
+     {
+      "uuid": "a908e061103b4b74aefcdff9d04c31d6",
+      "name": "feeds config/approval mismatch",
+      "key": "nodeguard.kv[feeds_config_approved_mismatch]",
+      "delay": "1m",
+      "value_type": "UNSIGNED",
+      "description": "1 = approvals exist but the deployed config does not enforce them (deploy-reverted config tripwire)",
+      "history": "31d",
+      "trends": "180d",
+      "triggers": [
+       {
+        "uuid": "c398edcef83346ae8c741bdf4dd7b732",
+        "name": "nodeguard feeds config/approval mismatch on {HOST.NAME}",
+        "expression": "min(/Nodeguard by Zabbix agent/nodeguard.kv[feeds_config_approved_mismatch],13h)>0",
+        "priority": "WARNING",
+        "description": "A deploy likely reverted a live config edit; enforcement is decaying open. Re-align hosts/<host>/feeds.conf and redeploy."
+       }
+      ]
+     },
+     {
+      "uuid": "9aff37180cd040618aa02910456246c7",
+      "name": "feeds journal reset",
+      "key": "nodeguard.kv[feeds_journal_reset]",
+      "delay": "1m",
+      "value_type": "UNSIGNED",
+      "description": "1 = state.json was lost and rebuilt insert-only this run",
+      "history": "31d",
+      "trends": "180d"
+     },
+     {
+      "uuid": "fbaa9d9a311b44ea8fe4882ccb94819a",
+      "name": "feeds churn held",
+      "key": "nodeguard.kv[feeds_churn_held]",
+      "delay": "1m",
+      "value_type": "UNSIGNED",
+      "description": "1 = a feed's composition jumped past the churn brake",
+      "history": "31d",
+      "trends": "180d",
+      "triggers": [
+       {
+        "uuid": "2e0f6893d93c4bdda8d5ae78973b9354",
+        "name": "nodeguard feed composition churn held on {HOST.NAME}",
+        "expression": "last(/Nodeguard by Zabbix agent/nodeguard.kv[feeds_churn_held])=1",
+        "priority": "WARNING",
+        "description": "Review last-diff.txt; accept with nodeguard-feeds apply --feed <id> --confirm."
+       }
+      ]
+     },
+     {
+      "uuid": "195961b83b74460ca92d8343e3c870a7",
+      "name": "feeds last run",
+      "key": "nodeguard.kv[feeds_last_run_ts]",
+      "delay": "1m",
+      "value_type": "UNSIGNED",
+      "description": "epoch of the last run",
+      "history": "31d",
+      "trends": "180d"
+     },
+     {
+      "uuid": "e7bbedef3ce7403bb2c6575f010d8d66",
+      "name": "feeds owned entries",
+      "key": "nodeguard.kv[feeds_entries]",
+      "delay": "1m",
+      "value_type": "UNSIGNED",
+      "description": "journal-owned block entries",
+      "history": "31d",
+      "trends": "180d"
+     },
+     {
+      "uuid": "36306bbc2f99414f91c6846dc898fd57",
+      "name": "feeds candidates",
+      "key": "nodeguard.kv[feeds_candidates]",
+      "delay": "1m",
+      "value_type": "UNSIGNED",
+      "description": "candidates seen this run",
+      "history": "31d",
+      "trends": "180d"
+     },
+     {
+      "uuid": "8228b4d8edaa458b9701d6577e1b905d",
+      "name": "feeds rejected",
+      "key": "nodeguard.kv[feeds_rejected]",
+      "delay": "1m",
+      "value_type": "UNSIGNED",
+      "description": "candidates dropped by protected/allow guards; nonzero is anomalous with bogon feeds excluded upstream",
+      "history": "31d",
+      "trends": "180d",
+      "triggers": [
+       {
+        "uuid": "85a1695d33784f44828c2b8ce2430f64",
+        "name": "nodeguard feed shipped protected ranges on {HOST.NAME}",
+        "expression": "min(/Nodeguard by Zabbix agent/nodeguard.kv[feeds_rejected],13h)>0",
+        "priority": "WARNING",
+        "description": "A curated feed is shipping protected or allowlisted ranges; review last-diff.txt."
+       }
+      ]
+     },
+     {
+      "uuid": "d2ea664360d44a0e8adce9eff807959f",
+      "name": "feeds failed count",
+      "key": "nodeguard.kv[feeds_failed]",
+      "delay": "1m",
+      "value_type": "UNSIGNED",
+      "description": "feeds FAILED this run (fetch, validation, staleness, canary)",
+      "history": "31d",
+      "trends": "180d",
+      "triggers": [
+       {
+        "uuid": "b0feaec604ed4c6a9918739f04fc5ee4",
+        "name": "nodeguard feeds failing for 18h on {HOST.NAME}",
+        "expression": "min(/Nodeguard by Zabbix agent/nodeguard.kv[feeds_failed],19h)>0",
+        "priority": "INFO",
+        "description": "Transient-failure carrier; per-feed staleness escalates separately."
+       }
+      ]
+     },
+     {
+      "uuid": "7d147749fd2a40ffbce6e69170e16be1",
+      "name": "feeds oldest success",
+      "key": "nodeguard.kv[feeds_last_success_ts_min]",
+      "delay": "1m",
+      "value_type": "UNSIGNED",
+      "description": "min over configured feeds of the last successful exchange",
+      "history": "31d",
+      "trends": "180d"
+     },
+     {
+      "uuid": "c4f8a46097944e9d8ec1a79c09d1043f",
+      "name": "feeds spamhaus_drop_v4 last success",
+      "key": "nodeguard.kv[feeds_last_success_ts_spamhaus_drop_v4]",
+      "delay": "1m",
+      "value_type": "UNSIGNED",
+      "description": "epoch of spamhaus_drop_v4's last successful HTTP exchange",
+      "history": "31d",
+      "trends": "180d",
+      "triggers": [
+       {
+        "uuid": "e4c630828e4447b5a9e0cf2fae3f578c",
+        "name": "nodeguard feed spamhaus_drop_v4 stale on {HOST.NAME}",
+        "expression": "last(/Nodeguard by Zabbix agent/nodeguard.kv[feeds_last_success_ts_spamhaus_drop_v4])>0 and fuzzytime(/Nodeguard by Zabbix agent/nodeguard.kv[feeds_last_success_ts_spamhaus_drop_v4],46800)=0",
+        "priority": "WARNING",
+        "description": "Two full cycles plus margin without a successful exchange."
+       },
+       {
+        "uuid": "785b06aaaeca4b2899669bcec6384603",
+        "name": "nodeguard feed spamhaus_drop_v4 failed open on {HOST.NAME}",
+        "expression": "last(/Nodeguard by Zabbix agent/nodeguard.kv[feeds_last_success_ts_spamhaus_drop_v4])>0 and fuzzytime(/Nodeguard by Zabbix agent/nodeguard.kv[feeds_last_success_ts_spamhaus_drop_v4],93600)=0",
+        "priority": "AVERAGE",
+        "description": "Entries for this feed have expired in-kernel; designed decay, not an outage."
+       }
+      ]
+     },
+     {
+      "uuid": "1804ac2477be4dde902ca0a607d22098",
+      "name": "feeds spamhaus_drop_v4 snapshot age",
+      "key": "nodeguard.kv[feeds_snapshot_age_spamhaus_drop_v4]",
+      "delay": "1m",
+      "value_type": "UNSIGNED",
+      "description": "seconds since spamhaus_drop_v4's content last changed",
+      "history": "31d",
+      "trends": "180d",
+      "triggers": [
+       {
+        "uuid": "29b6bb7d234048ee91232e36e9e8133a",
+        "name": "nodeguard feed spamhaus_drop_v4 upstream frozen on {HOST.NAME}",
+        "expression": "last(/Nodeguard by Zabbix agent/nodeguard.kv[feeds_snapshot_age_spamhaus_drop_v4])>604800",
+        "priority": "WARNING",
+        "description": "Upstream unchanged for 7 days; re-stamp hard-stops at 14 days."
+       }
+      ]
+     },
+     {
+      "uuid": "aca6d0689ab14ea6ba163e44b783fbdc",
+      "name": "feeds spamhaus_drop_v6 last success",
+      "key": "nodeguard.kv[feeds_last_success_ts_spamhaus_drop_v6]",
+      "delay": "1m",
+      "value_type": "UNSIGNED",
+      "description": "epoch of spamhaus_drop_v6's last successful HTTP exchange",
+      "history": "31d",
+      "trends": "180d",
+      "triggers": [
+       {
+        "uuid": "e013306d0bdd4760b90efeb0dfcee988",
+        "name": "nodeguard feed spamhaus_drop_v6 stale on {HOST.NAME}",
+        "expression": "last(/Nodeguard by Zabbix agent/nodeguard.kv[feeds_last_success_ts_spamhaus_drop_v6])>0 and fuzzytime(/Nodeguard by Zabbix agent/nodeguard.kv[feeds_last_success_ts_spamhaus_drop_v6],46800)=0",
+        "priority": "WARNING",
+        "description": "Two full cycles plus margin without a successful exchange."
+       },
+       {
+        "uuid": "b7a8c351cd9d4f2a85dc7f2eefbe0b40",
+        "name": "nodeguard feed spamhaus_drop_v6 failed open on {HOST.NAME}",
+        "expression": "last(/Nodeguard by Zabbix agent/nodeguard.kv[feeds_last_success_ts_spamhaus_drop_v6])>0 and fuzzytime(/Nodeguard by Zabbix agent/nodeguard.kv[feeds_last_success_ts_spamhaus_drop_v6],93600)=0",
+        "priority": "AVERAGE",
+        "description": "Entries for this feed have expired in-kernel; designed decay, not an outage."
+       }
+      ]
+     },
+     {
+      "uuid": "44433d6bad8d41eea7655c5df9331a31",
+      "name": "feeds spamhaus_drop_v6 snapshot age",
+      "key": "nodeguard.kv[feeds_snapshot_age_spamhaus_drop_v6]",
+      "delay": "1m",
+      "value_type": "UNSIGNED",
+      "description": "seconds since spamhaus_drop_v6's content last changed",
+      "history": "31d",
+      "trends": "180d",
+      "triggers": [
+       {
+        "uuid": "b2379498c7814f14a7f52f55f1b2eb34",
+        "name": "nodeguard feed spamhaus_drop_v6 upstream frozen on {HOST.NAME}",
+        "expression": "last(/Nodeguard by Zabbix agent/nodeguard.kv[feeds_snapshot_age_spamhaus_drop_v6])>604800",
+        "priority": "WARNING",
+        "description": "Upstream unchanged for 7 days; re-stamp hard-stops at 14 days."
+       }
+      ]
+     },
+     {
+      "uuid": "b54879302d134a3f9f21adf18ba2bbfc",
+      "name": "feeds dshield_top20 last success",
+      "key": "nodeguard.kv[feeds_last_success_ts_dshield_top20]",
+      "delay": "1m",
+      "value_type": "UNSIGNED",
+      "description": "epoch of dshield_top20's last successful HTTP exchange",
+      "history": "31d",
+      "trends": "180d",
+      "triggers": [
+       {
+        "uuid": "b93853f7d30043d9800acd972f49e312",
+        "name": "nodeguard feed dshield_top20 stale on {HOST.NAME}",
+        "expression": "last(/Nodeguard by Zabbix agent/nodeguard.kv[feeds_last_success_ts_dshield_top20])>0 and fuzzytime(/Nodeguard by Zabbix agent/nodeguard.kv[feeds_last_success_ts_dshield_top20],46800)=0",
+        "priority": "WARNING",
+        "description": "Two full cycles plus margin without a successful exchange."
+       },
+       {
+        "uuid": "edf99a3b0a064649bfc1b7396fb8281b",
+        "name": "nodeguard feed dshield_top20 failed open on {HOST.NAME}",
+        "expression": "last(/Nodeguard by Zabbix agent/nodeguard.kv[feeds_last_success_ts_dshield_top20])>0 and fuzzytime(/Nodeguard by Zabbix agent/nodeguard.kv[feeds_last_success_ts_dshield_top20],93600)=0",
+        "priority": "AVERAGE",
+        "description": "Entries for this feed have expired in-kernel; designed decay, not an outage."
+       }
+      ]
+     },
+     {
+      "uuid": "8319f64f0e334b7bb67bcfea9739ca39",
+      "name": "feeds dshield_top20 snapshot age",
+      "key": "nodeguard.kv[feeds_snapshot_age_dshield_top20]",
+      "delay": "1m",
+      "value_type": "UNSIGNED",
+      "description": "seconds since dshield_top20's content last changed",
+      "history": "31d",
+      "trends": "180d",
+      "triggers": [
+       {
+        "uuid": "feeff08ba116419c8b9d066a265e3fd0",
+        "name": "nodeguard feed dshield_top20 upstream frozen on {HOST.NAME}",
+        "expression": "last(/Nodeguard by Zabbix agent/nodeguard.kv[feeds_snapshot_age_dshield_top20])>604800",
+        "priority": "WARNING",
+        "description": "Upstream unchanged for 7 days; re-stamp hard-stops at 14 days."
+       }
+      ]
      }
     ]
    }

@@ -1,0 +1,805 @@
+#!/usr/bin/env python3
+"""nodeguard-feeds: threat-intel feed loader for the nodeguard block maps.
+
+Fetches curated attacker-reputation feeds (Spamhaus DROP v4/v6, DShield
+top-20), validates them against each feed's real grammar, and reconciles
+the survivors into block4/block6 with a 25h in-kernel TTL, so every
+failure decays to no enforcement.
+
+INVARIANT W1: withdrawal is computed per feed against that feed's own
+desired set, and a feed that FAILED this run (fetch, validation,
+staleness, canary, churn) performs ZERO withdrawals; its entries age out
+by TTL only. A FAILED feed showing a planned withdrawal is a loader bug
+and fails the run.
+
+SAFETY: ownership lives in this loader's journal plus compare-and-swap
+on the written expiry value under the per-key lock; a live map entry not
+written by this loader is never modified or deleted. The reconcile
+baseline is the journal, never a dump of the block maps (they have other
+writers).
+
+SAFETY: enforcement needs the double gate: the feed listed in
+FEEDS_APPLY in the deployed config AND present in approved.json, which
+only the interactive `apply --confirm` writes. Everything else is
+dry-run: full diff, zero writes.
+"""
+
+import argparse
+import hashlib
+import ipaddress
+import json
+import os
+import struct
+import sys
+import time
+import urllib.error
+import urllib.request
+
+sys.path.insert(0, "/usr/local/lib/nodeguard")
+import ngmap  # noqa: E402
+
+CONF = "/etc/nodeguard/feeds.conf"
+ENV = "/etc/nodeguard/nodeguard.env"
+STATE_DIR = "/var/lib/nodeguard/feeds"
+STATE = f"{STATE_DIR}/state.json"
+APPROVED = f"{STATE_DIR}/approved.json"
+KV = f"{STATE_DIR}/feeds.kv"
+DIFF = f"{STATE_DIR}/last-diff.txt"
+BOOT_ID_PATH = "/proc/sys/kernel/random/boot_id"
+
+FEED_DEFS = {
+    "spamhaus_drop_v4": {
+        "url": "https://www.spamhaus.org/drop/drop_v4.json",
+        "kind": "spamhaus", "family": 4, "min": 500, "max": 10000},
+    "spamhaus_drop_v6": {
+        "url": "https://www.spamhaus.org/drop/drop_v6.json",
+        "kind": "spamhaus", "family": 6, "min": 10, "max": 5000},
+    "dshield_top20": {
+        "url": "https://feeds.dshield.org/block.txt",
+        "kind": "dshield", "family": 4, "min": 5, "max": 64},
+}
+
+DEFAULTS = {
+    "FEEDS_ENFORCE": "no",
+    "FEEDS_APPLY": "",
+    "FEEDS_DRYRUN": "spamhaus_drop_v4 spamhaus_drop_v6 dshield_top20",
+    "FEEDS_TTL_S": "90000",
+    "FEEDS_MAX_V4": "8192",
+    "FEEDS_MAX_V6": "2048",
+    "FEEDS_MAX_BYTES": "4194304",
+    "FEEDS_V6_FLOOR": "19",
+    "FEEDS_MAX_COVERAGE_V4": "67108864",
+    "FEEDS_MAX_COVERAGE_V6_48": "4194304",
+    "FEEDS_MAX_CHURN_PCT": "30",
+    "FEEDS_MAX_STALE_S": "1209600",
+}
+STALE_WARN_S = 7 * 86400
+MAP_HEADROOM = 0.80
+
+
+def log(msg):
+    print(msg, flush=True)
+
+
+def read_kv_file(path, defaults=None):
+    conf = dict(defaults or {})
+    try:
+        with open(path) as f:
+            for line in f:
+                line = line.split("#", 1)[0].strip()
+                if "=" in line:
+                    k, v = line.split("=", 1)
+                    conf[k.strip()] = v.strip().strip('"')
+    except FileNotFoundError:
+        pass
+    return conf
+
+
+def load_json(path, default):
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return None if default is None else default
+
+
+def save_json(path, data):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(data, f, indent=1)
+    os.replace(tmp, path)
+
+
+def boot_id():
+    with open(BOOT_ID_PATH) as f:
+        return f.read().strip()
+
+
+# ------------------------------------------------------------ fetch layer
+
+def fetch(feed, meta, max_bytes):
+    """Return (status, body_bytes). status: 'ok', '304', 'failed:<why>'."""
+    d = FEED_DEFS[feed]
+    req = urllib.request.Request(d["url"], headers={
+        "User-Agent": "nodeguard-feeds/1.0"})
+    if meta.get("etag"):
+        req.add_header("If-None-Match", meta["etag"])
+    if meta.get("last_modified"):
+        req.add_header("If-Modified-Since", meta["last_modified"])
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            body = r.read(max_bytes + 1)
+            if len(body) > max_bytes:
+                return f"failed:body over {max_bytes} byte cap", None
+            meta["etag"] = r.headers.get("ETag") or meta.get("etag")
+            meta["last_modified"] = (r.headers.get("Last-Modified")
+                                     or meta.get("last_modified"))
+            return "ok", body
+    except urllib.error.HTTPError as e:
+        if e.code == 304:
+            return "304", None
+        return f"failed:HTTP {e.code}", None
+    except Exception as e:  # DNS, timeout, TLS
+        return f"failed:{e.__class__.__name__}: {e}", None
+
+
+# --------------------------------------------------------------- parsers
+
+def parse_spamhaus(body):
+    """JSONL of {cidr, sblid, ...} with a REQUIRED metadata trailer whose
+    records field must equal the record count (the truncation check)."""
+    records = []
+    trailer = None
+    lines = [ln for ln in body.decode("utf-8", "strict").splitlines()
+             if ln.strip()]
+    for i, ln in enumerate(lines):
+        obj = json.loads(ln)
+        if not isinstance(obj, dict):
+            raise ValueError(f"line {i + 1}: not an object")
+        if obj.get("type") == "metadata":
+            if i != len(lines) - 1:
+                raise ValueError("metadata trailer is not the final line")
+            trailer = obj
+            continue
+        if "cidr" not in obj:
+            raise ValueError(f"line {i + 1}: cidr-less record")
+        net = ipaddress.ip_network(obj["cidr"], strict=True)
+        records.append((net, str(obj.get("sblid", ""))))
+    if trailer is None:
+        raise ValueError("missing metadata trailer")
+    if int(trailer.get("records", -1)) != len(records):
+        raise ValueError(
+            f"trailer records={trailer.get('records')} != {len(records)}")
+    return records, {"copyright": trailer.get("copyright", ""),
+                     "timestamp": trailer.get("timestamp", "")}
+
+
+def parse_dshield(body):
+    """'#' header; data lines: start_ip<TAB>end_ip<TAB>netmask<TAB>...
+    Each must form a /24 whose broadcast equals end_ip."""
+    records = []
+    for i, ln in enumerate(body.decode("utf-8", "strict").splitlines()):
+        if not ln.strip() or ln.startswith("#"):
+            continue
+        cols = ln.split("\t")
+        if len(cols) < 3:
+            raise ValueError(f"line {i + 1}: fewer than 3 tab fields")
+        net = ipaddress.ip_network(f"{cols[0]}/{cols[2]}", strict=True)
+        if net.prefixlen != 24:
+            raise ValueError(f"line {i + 1}: not a /24: {net}")
+        if str(net.broadcast_address) != cols[1]:
+            raise ValueError(
+                f"line {i + 1}: end {cols[1]} != broadcast of {net}")
+        name = cols[4] if len(cols) > 4 else ""
+        records.append((net, name))
+    return records, {}
+
+
+PARSERS = {"spamhaus": parse_spamhaus, "dshield": parse_dshield}
+
+
+# ------------------------------------------------------------- gate layer
+
+def coverage(nets):
+    v4 = sum(n.num_addresses for n in nets if n.version == 4)
+    v6 = sum((2 ** (48 - n.prefixlen)) if n.prefixlen <= 48 else 1
+             for n in nets if n.version == 6)
+    return v4, v6
+
+
+def allow_snapshot():
+    """One allow-map snapshot per run; None means undeterminable.
+    SAFETY: an empty family on a deployed host means the allow layer is
+    broken mid-reload; writing feed blocks then risks enforcing against
+    the operator's own paths, so the caller aborts the run."""
+    try:
+        nets = ngmap.allow_entries_live()
+    except Exception as e:
+        log(f"feeds: allow snapshot failed: {e}")
+        return None
+    return nets
+
+
+# --------------------------------------------------------------- journal
+
+def jkey(net):
+    return str(net)
+
+
+def encode_value(expiry_ns, hits):
+    return struct.pack("<QQ", expiry_ns, hits)
+
+
+def decode_value(raw):
+    return struct.unpack("<QQ", raw)
+
+
+class Runner:
+    def __init__(self, conf):
+        self.conf = conf
+        self.env = read_kv_file(ENV)
+        self.canary = self.env.get("CANARY_IP", "")
+        self.state = load_json(STATE, default={})
+        self.journal_reset = 0
+        if self.state is None:
+            log("feeds: state.json unreadable; insert-only rebuild "
+                "(never delete without proof of ownership)")
+            self.state = {}
+            self.journal_reset = 1
+        self.approved = load_json(APPROVED, default={"feeds": []})
+        if self.approved is None:
+            log("feeds: approved.json unreadable; DISARMED until a human "
+                "re-runs apply --confirm")
+            self.approved = {"feeds": []}
+        self.state.setdefault("feeds", {})
+        self.state.setdefault("entries", {})
+        self.ttl = int(conf["FEEDS_TTL_S"])
+        self.now = time.time()
+        self.diff_lines = []
+        self.failed = []
+        self.rejected = 0
+        self.candidates = 0
+        self.churn_held = []
+        self.boot = boot_id()
+        self.prev_boot = self.state.get("boot_id")
+        self.adoption = bool(self.state.get("run_in_progress")) \
+            and self.prev_boot == self.boot
+        if self.adoption:
+            log("feeds: previous run crashed mid-flight; bounded adoption "
+                "mode for this run")
+
+    def dline(self, s):
+        self.diff_lines.append(s)
+
+    def feed_meta(self, feed):
+        return self.state["feeds"].setdefault(feed, {})
+
+    def configured(self):
+        dry = self.conf["FEEDS_DRYRUN"].split()
+        app = self.conf["FEEDS_APPLY"].split()
+        out = []
+        for f in app + dry:  # apply order wins dedupe provenance
+            if f not in out:
+                if f not in FEED_DEFS:
+                    log(f"feeds: unknown feed id {f!r} ignored")
+                    continue
+                out.append(f)
+        return out
+
+    def enforcing(self, feed):
+        return (self.conf["FEEDS_ENFORCE"].lower() == "yes"
+                and feed in self.conf["FEEDS_APPLY"].split()
+                and feed in self.approved.get("feeds", []))
+
+    # ------------------------------------------------------------- fetch
+
+    def obtain(self, feed):
+        """Fetch + validate one feed. Returns list[(net, ref)] or None."""
+        d = FEED_DEFS[feed]
+        meta = self.feed_meta(feed)
+        os.makedirs(f"{STATE_DIR}/{feed}", exist_ok=True)
+        good = f"{STATE_DIR}/{feed}/last-good"
+        status, body = fetch(feed, meta, int(self.conf["FEEDS_MAX_BYTES"]))
+        if status == "304":
+            try:
+                with open(good, "rb") as f:
+                    body = f.read()
+            except FileNotFoundError:
+                self.failed.append(feed)
+                self.dline(f"FAILED {feed}: 304 with no last-good snapshot")
+                return None
+        elif status != "ok":
+            self.failed.append(feed)
+            self.dline(f"FAILED {feed}: {status}")
+            return None
+
+        # frozen-upstream cap: a chain of 304s or identical bodies never
+        # advances last_changed_ts; past the hard cap the feed FAILS even
+        # though the exchange succeeded (no indefinite stale enforcement).
+        digest = hashlib.sha256(body).hexdigest()
+        if status == "ok" and digest != meta.get("last_digest"):
+            meta["last_digest"] = digest
+            meta["last_changed_ts"] = self.now
+        meta.setdefault("last_changed_ts", self.now)
+        if self.now - meta["last_changed_ts"] > int(self.conf["FEEDS_MAX_STALE_S"]):
+            self.failed.append(feed)
+            self.dline(f"FAILED {feed}: upstream frozen past "
+                       f"{self.conf['FEEDS_MAX_STALE_S']}s; entries decay")
+            return None
+
+        try:
+            records, attribution = PARSERS[d["kind"]](body)
+        except (ValueError, json.JSONDecodeError, UnicodeDecodeError) as e:
+            self.failed.append(feed)
+            self.dline(f"FAILED {feed}: validation: {e}")
+            bad = f"{STATE_DIR}/{feed}/last-bad"
+            with open(bad, "wb") as f:
+                f.write(body)
+            return None
+
+        lo = int(self.conf.get(f"FEEDS_MIN_{feed.upper()}", d["min"]))
+        hi = int(self.conf.get(f"FEEDS_MAX_{feed.upper()}", d["max"]))
+        if not (lo <= len(records) <= hi):
+            self.failed.append(feed)
+            self.dline(f"FAILED {feed}: {len(records)} records outside "
+                       f"[{lo}, {hi}]")
+            return None
+
+        for net, _ in records:
+            if net.version != d["family"]:
+                self.failed.append(feed)
+                self.dline(f"FAILED {feed}: {net} wrong address family")
+                return None
+
+        tmp = good + ".tmp"
+        with open(tmp, "wb") as f:
+            f.write(body)
+        os.replace(tmp, good)
+        meta["attribution"] = attribution  # Spamhaus (c) kept with snapshot
+        meta["last_success_ts"] = self.now
+        return records
+
+    # -------------------------------------------------------------- gate
+
+    def gate(self, per_feed, allow):
+        """Dedupe, floors, canary, protected, capacity, coverage, churn.
+        Mutates per_feed to the surviving desired sets."""
+        v6_floor = int(self.conf["FEEDS_V6_FLOOR"])
+        seen = {}
+        for feed in list(per_feed):
+            desired = {}
+            for net, ref in per_feed[feed]:
+                self.candidates += 1
+                if net.version == 4 and net.prefixlen < 8:
+                    self.failed.append(feed)
+                    self.dline(f"FAILED {feed}: {net} shorter than /8")
+                    del per_feed[feed]
+                    break
+                if net.version == 6 and net.prefixlen < v6_floor:
+                    self.failed.append(feed)
+                    self.dline(f"FAILED {feed}: {net} shorter than "
+                               f"/{v6_floor}")
+                    del per_feed[feed]
+                    break
+                # SAFETY: canary coverage is a run-level anomaly for the
+                # feed, never a per-entry drop; silently removing the one
+                # entry able to trip the watchdog canary while keeping
+                # the rest of an anomalous feed would blind the tripwire.
+                if self.canary:
+                    c = ipaddress.ip_address(self.canary)
+                    if c.version == net.version and c in net:
+                        self.failed.append(feed)
+                        self.dline(f"FAILED {feed}: {net} covers the "
+                                   f"canary {self.canary}; entire feed "
+                                   "refused this run")
+                        del per_feed[feed]
+                        break
+                if jkey(net) in seen:
+                    continue  # first feed in order owns it
+                reason = ngmap.is_protected(str(net.network_address), allow)
+                if reason is None:
+                    p = ngmap.contains_protected(net, allow)
+                    if p is not None:
+                        reason = f"contains protected {p}"
+                if reason:
+                    self.rejected += 1
+                    self.dline(f"reject {feed} {net}: {reason}")
+                    continue
+                seen[jkey(net)] = feed
+                desired[jkey(net)] = (net, ref)
+            else:
+                per_feed[feed] = desired
+
+        # capacity and aggregate coverage, across all surviving feeds
+        all_nets = [net for d in per_feed.values() for net, _ in d.values()]
+        n4 = sum(1 for n in all_nets if n.version == 4)
+        n6 = sum(1 for n in all_nets if n.version == 6)
+        if n4 > int(self.conf["FEEDS_MAX_V4"]) or \
+                n6 > int(self.conf["FEEDS_MAX_V6"]):
+            raise SystemExit(f"feeds: entry caps exceeded (v4={n4} v6={n6})")
+        cov4, cov6 = coverage(all_nets)
+        if cov4 > int(self.conf["FEEDS_MAX_COVERAGE_V4"]):
+            raise SystemExit(
+                f"feeds: v4 coverage {cov4} addresses exceeds cap; a "
+                "validity-passing feed of broad aggregates would black-hole "
+                "inbound; refusing the run")
+        if cov6 > int(self.conf["FEEDS_MAX_COVERAGE_V6_48"]):
+            raise SystemExit(f"feeds: v6 coverage {cov6} /48-equivalents "
+                             "exceeds cap; refusing the run")
+        for kind, path, cap in (("v4", f"{ngmap.PIN}/block4", 65536),
+                                ("v6", f"{ngmap.PIN}/block6", 16384)):
+            live = sum(1 for _ in ngmap.dump_map(path))
+            planned = n4 if kind == "v4" else n6
+            if live + planned > cap * MAP_HEADROOM:
+                raise SystemExit(
+                    f"feeds: {kind} map would exceed {int(cap * MAP_HEADROOM)}"
+                    f" entries (live {live} + planned {planned}); responder "
+                    "headroom preserved; refusing the run")
+
+        # churn brake, per feed, against the last APPLIED baseline
+        pct = int(self.conf["FEEDS_MAX_CHURN_PCT"])
+        for feed, desired in per_feed.items():
+            base = self.feed_meta(feed).get("applied_cidrs")
+            if base is None or not self.enforcing(feed):
+                continue  # first enforcing run baselines via apply --confirm
+            bset = set(base)
+            dset = set(desired.keys())
+            delta = len(bset ^ dset)
+            if bset and delta * 100 > pct * len(bset):
+                self.churn_held.append(feed)
+                self.dline(f"CHURN-HELD {feed}: symmetric difference "
+                           f"{delta} exceeds {pct} percent of baseline "
+                           f"{len(bset)}; refreshes only until "
+                           "apply --confirm")
+
+    # --------------------------------------------------------- reconcile
+
+    def reconcile(self, feed, desired, enforce):
+        """Insert/refresh/withdraw for one feed. Design section 4."""
+        entries = self.state["entries"]
+        mine = {k: v for k, v in entries.items() if v.get("feed") == feed}
+        planned = {"insert": [], "refresh": [], "withdraw": [], "skip": []}
+        held = feed in self.churn_held
+        expiry = ngmap.mono_ns() + self.ttl * 10 ** 9
+
+        for k, (net, ref) in desired.items():
+            if k in mine:
+                planned["refresh"].append(k)
+            elif not held:
+                planned["insert"].append(k)
+        if not held and feed not in self.failed:
+            for k in mine:
+                if k not in desired:
+                    planned["withdraw"].append(k)
+        # INVARIANT W1, asserted mechanically:
+        if feed in self.failed and planned["withdraw"]:
+            raise SystemExit(f"feeds: BUG: FAILED feed {feed} planned "
+                             "withdrawals; refusing the run")
+
+        if not enforce:
+            for verb in ("insert", "refresh", "withdraw"):
+                for k in planned[verb]:
+                    self.dline(f"would-{verb} {feed} {k}")
+            return {v: len(planned[v]) for v in planned}
+
+        counts = {"insert": 0, "refresh": 0, "withdraw": 0, "skip": 0}
+        for k in planned["insert"] + planned["refresh"]:
+            net, ref = desired[k]
+            path = ngmap.map_path(net, "block")
+            keyb = ngmap.key_bytes(net)
+            row = mine.get(k)
+            lock = ngmap.block_lock()
+            try:
+                cur = ngmap.lookup_value(path, keyb)
+                if row is not None and cur is not None:
+                    cur_exp, cur_hits = decode_value(cur)
+                    if cur_exp == row["written_expiry_ns"]:
+                        ngmap.update_map(path, keyb,
+                                         encode_value(expiry, cur_hits))
+                        row.update(written_expiry_ns=expiry,
+                                   last_written=self.now, ref=ref)
+                        counts["refresh"] += 1
+                    else:
+                        # another writer owns it now; forfeit the claim
+                        del entries[k]
+                        counts["skip"] += 1
+                        self.dline(f"skip {feed} {k}: foreign live entry")
+                    continue
+                if row is not None and cur is None:
+                    # previously owned, swept away (outage, toggle):
+                    # re-insert in this same run, not next cycle
+                    ngmap.update_map(path, keyb, encode_value(expiry, 0))
+                    row.update(written_expiry_ns=expiry,
+                               last_written=self.now, ref=ref)
+                    counts["insert"] += 1
+                    log(f"feeds: previously-owned key {k} absent, "
+                        "re-inserting; allowlist to suppress")
+                    continue
+                # no journal row
+                if cur is None:
+                    ngmap.update_map(path, keyb, encode_value(expiry, 0))
+                    entries[k] = {"feed": feed, "ref": ref,
+                                  "written_expiry_ns": expiry,
+                                  "first_seen": self.now,
+                                  "last_written": self.now}
+                    counts["insert"] += 1
+                    continue
+                cur_exp, cur_hits = decode_value(cur)
+                if cur_exp and ngmap.mono_ns() >= cur_exp:
+                    # expired corpse enforces nothing for anyone: adopt
+                    ngmap.update_map(path, keyb, encode_value(expiry, 0))
+                    entries[k] = {"feed": feed, "ref": ref,
+                                  "written_expiry_ns": expiry,
+                                  "first_seen": self.now,
+                                  "last_written": self.now}
+                    counts["insert"] += 1
+                elif self.adoption:
+                    # crash-flagged run: a live entry exactly matching a
+                    # desired CIDR with no journal row was probably ours
+                    ngmap.update_map(path, keyb,
+                                     encode_value(expiry, cur_hits))
+                    entries[k] = {"feed": feed, "ref": ref,
+                                  "written_expiry_ns": expiry,
+                                  "first_seen": self.now,
+                                  "last_written": self.now}
+                    counts["insert"] += 1
+                    self.dline(f"adopted {feed} {k} (crash recovery)")
+                else:
+                    counts["skip"] += 1
+                    self.dline(f"skip {feed} {k}: live foreign entry")
+            finally:
+                lock.close()
+
+        for k in planned["withdraw"]:
+            row = entries.get(k)
+            if row is None:
+                continue
+            net = ipaddress.ip_network(k)
+            path = ngmap.map_path(net, "block")
+            keyb = ngmap.key_bytes(net)
+            lock = ngmap.block_lock()
+            try:
+                cur = ngmap.lookup_value(path, keyb)
+                if cur is not None:
+                    cur_exp, _ = decode_value(cur)
+                    if cur_exp == row["written_expiry_ns"]:
+                        ngmap.delete_key(path, keyb)
+                        counts["withdraw"] += 1
+                del entries[k]
+            finally:
+                lock.close()
+        return counts
+
+    # --------------------------------------------------------------- run
+
+    def run(self):
+        feeds = self.configured()
+        allow = allow_snapshot()
+        if allow is None or not any(n.version == 4 for n in allow):
+            log("feeds: allow snapshot unavailable or v4-empty; aborting "
+                "the run with no writes (allow-before-block masking would "
+                "be absent)")
+            self.failed = list(feeds)
+            self.finish(feeds)
+            return 1
+
+        self.state["run_in_progress"] = True
+        save_json(STATE, self.state)
+
+        reboot = self.prev_boot is not None and self.prev_boot != self.boot
+        if reboot:
+            # maps were wiped and CLOCK_MONOTONIC restarted: withdrawals
+            # would find nothing and expiry comparisons are meaningless;
+            # drop every journal row and write the desired sets fresh.
+            log("feeds: boot id changed; journal rows dropped, fresh write")
+            self.state["entries"] = {}
+        self.state["boot_id"] = self.boot
+
+        per_feed = {}
+        for feed in feeds:
+            recs = self.obtain(feed)
+            if recs is not None:
+                per_feed[feed] = recs
+        self.gate(per_feed, allow)
+
+        summary = {}
+        for feed in feeds:
+            if feed not in per_feed:
+                summary[feed] = "FAILED"
+                continue
+            enforce = self.enforcing(feed)
+            counts = self.reconcile(feed, per_feed[feed], enforce)
+            mode = "ENFORCE" if enforce else "dry-run"
+            if feed in self.churn_held:
+                mode += " CHURN-HELD"
+            summary[feed] = f"{mode} " + " ".join(
+                f"{k}={v}" for k, v in counts.items())
+            if enforce and feed not in self.churn_held:
+                self.feed_meta(feed)["applied_cidrs"] = \
+                    sorted(per_feed[feed].keys())
+
+        self.state["run_in_progress"] = False
+        save_json(STATE, self.state)
+        self.finish(feeds, summary)
+        return 1 if self.failed else 0
+
+    def finish(self, feeds, summary=None):
+        os.makedirs(STATE_DIR, exist_ok=True)
+        with open(DIFF + ".tmp", "w") as f:
+            f.write(f"# nodeguard-feeds diff, {time.ctime(self.now)}\n")
+            f.write("\n".join(self.diff_lines) + "\n")
+        os.replace(DIFF + ".tmp", DIFF)
+        for feed, s in (summary or {}).items():
+            log(f"feeds: SUMMARY {feed}: {s}")
+        for ln in self.diff_lines:
+            if ln.startswith(("reject", "FAILED", "CHURN-HELD", "adopted")):
+                log(f"feeds: {ln}")
+        self.write_kv(feeds)
+
+    def write_kv(self, feeds):
+        mismatch = 0
+        approved = self.approved.get("feeds", [])
+        if approved and (self.conf["FEEDS_ENFORCE"].lower() != "yes"
+                         or any(f not in self.conf["FEEDS_APPLY"].split()
+                                for f in approved)):
+            mismatch = 1
+        lines = [
+            f"ng.feeds_enforce={1 if self.conf['FEEDS_ENFORCE'].lower() == 'yes' else 0}",
+            f"ng.feeds_approved={len(approved)}",
+            f"ng.feeds_config_approved_mismatch={mismatch}",
+            f"ng.feeds_journal_reset={self.journal_reset}",
+            f"ng.feeds_churn_held={1 if self.churn_held else 0}",
+            f"ng.feeds_last_run_ts={int(self.now)}",
+            f"ng.feeds_entries={len(self.state.get('entries', {}))}",
+            f"ng.feeds_candidates={self.candidates}",
+            f"ng.feeds_rejected={self.rejected}",
+            f"ng.feeds_failed={len(self.failed)}",
+        ]
+        succ = []
+        for feed in feeds:
+            ts = int(self.feed_meta(feed).get("last_success_ts", 0))
+            ch = self.feed_meta(feed).get("last_changed_ts", 0)
+            lines.append(f"ng.feeds_last_success_ts_{feed}={ts}")
+            lines.append(
+                f"ng.feeds_snapshot_age_{feed}={int(self.now - ch) if ch else 0}")
+            succ.append(ts)
+        lines.append(f"ng.feeds_last_success_ts_min={min(succ) if succ else 0}")
+        with open(KV + ".tmp", "w") as f:
+            f.write("\n".join(lines) + "\n")
+        os.replace(KV + ".tmp", KV)
+
+
+# ----------------------------------------------------------------- modes
+
+def mode_run(conf, _a):
+    return Runner(conf).run()
+
+
+def mode_diff(conf, _a):
+    r = Runner(conf)
+    feeds = r.configured()
+    allow = allow_snapshot()
+    if allow is None:
+        log("feeds: allow snapshot unavailable")
+        return 1
+    per_feed = {}
+    for feed in feeds:
+        good = f"{STATE_DIR}/{feed}/last-good"
+        try:
+            with open(good, "rb") as f:
+                body = f.read()
+        except FileNotFoundError:
+            log(f"feeds: {feed}: no last-good snapshot yet")
+            continue
+        try:
+            recs, _ = PARSERS[FEED_DEFS[feed]["kind"]](body)
+            per_feed[feed] = recs
+        except ValueError as e:
+            log(f"feeds: {feed}: snapshot invalid: {e}")
+    r.gate(per_feed, allow)
+    for feed, desired in per_feed.items():
+        r.reconcile(feed, desired, enforce=False)
+    print("\n".join(r.diff_lines) or "(no pending changes)")
+    return 0
+
+
+def mode_apply(conf, a):
+    if not a.feed:
+        raise SystemExit("apply requires --feed <id>")
+    if not a.confirm:
+        raise SystemExit("apply requires the literal --confirm flag")
+    if a.feed not in FEED_DEFS:
+        raise SystemExit(f"unknown feed {a.feed}")
+    approved = load_json(APPROVED, default={"feeds": []}) or {"feeds": []}
+    if a.feed not in approved["feeds"]:
+        approved["feeds"].append(a.feed)
+    approved[f"approved_ts_{a.feed}"] = time.time()
+    save_json(APPROVED, approved)
+    log(f"feeds: {a.feed} APPROVED; baseline and first enforcing "
+        "reconcile follow")
+    r = Runner(conf)
+    if a.feed in r.churn_held:
+        r.churn_held.remove(a.feed)
+    # re-baseline then run the full pipeline so the first enforcing
+    # reconcile happens under every gate
+    r.approved = approved
+    rc = r.run()
+    print(open(DIFF).read())
+    return rc
+
+
+def mode_withdraw(conf, a):
+    if not a.confirm:
+        raise SystemExit("withdraw requires the literal --confirm flag")
+    r = Runner(conf)
+    entries = r.state.get("entries", {})
+    targets = {k: v for k, v in entries.items()
+               if a.feed is None or v.get("feed") == a.feed}
+    n = 0
+    for k, row in list(targets.items()):
+        net = ipaddress.ip_network(k)
+        path = ngmap.map_path(net, "block")
+        keyb = ngmap.key_bytes(net)
+        lock = ngmap.block_lock()
+        try:
+            cur = ngmap.lookup_value(path, keyb)
+            if cur is not None:
+                cur_exp, _ = decode_value(cur)
+                if cur_exp == row["written_expiry_ns"]:
+                    ngmap.delete_key(path, keyb)
+                    n += 1
+            del entries[k]
+        finally:
+            lock.close()
+    if a.feed:
+        approved = load_json(APPROVED, default={"feeds": []}) or {"feeds": []}
+        if a.feed in approved.get("feeds", []):
+            approved["feeds"].remove(a.feed)
+            save_json(APPROVED, approved)
+            log(f"feeds: {a.feed} approval REVOKED")
+    save_json(STATE, r.state)
+    r.write_kv(r.configured())
+    log(f"feeds: withdrew {n} owned entries"
+        + (f" for {a.feed}" if a.feed else " (all feeds)"))
+    return 0
+
+
+def mode_status(conf, _a):
+    r = Runner(conf)
+    print(f"enforce={conf['FEEDS_ENFORCE']} "
+          f"approved={r.approved.get('feeds', [])} "
+          f"apply={conf['FEEDS_APPLY'].split()} "
+          f"dryrun={conf['FEEDS_DRYRUN'].split()}")
+    ent = r.state.get("entries", {})
+    per = {}
+    for v in ent.values():
+        per[v.get("feed")] = per.get(v.get("feed"), 0) + 1
+    print(f"owned entries: {len(ent)} {per}")
+    for feed in r.configured():
+        m = r.feed_meta(feed)
+        ts = m.get("last_success_ts")
+        print(f"{feed}: last_success="
+              f"{time.ctime(ts) if ts else 'never'} "
+              f"changed={time.ctime(m['last_changed_ts']) if m.get('last_changed_ts') else 'never'}")
+    return 0
+
+
+def main():
+    ap = argparse.ArgumentParser(prog="nodeguard-feeds")
+    sub = ap.add_subparsers(dest="mode", required=True)
+    for m in ("run", "diff", "status"):
+        sub.add_parser(m)
+    for m in ("apply", "withdraw"):
+        p = sub.add_parser(m)
+        p.add_argument("--feed")
+        p.add_argument("--confirm", action="store_true")
+    a = ap.parse_args()
+    conf = read_kv_file(CONF, DEFAULTS)
+    fn = {"run": mode_run, "diff": mode_diff, "apply": mode_apply,
+          "withdraw": mode_withdraw, "status": mode_status}[a.mode]
+    sys.exit(fn(conf, a))
+
+
+if __name__ == "__main__":
+    main()
