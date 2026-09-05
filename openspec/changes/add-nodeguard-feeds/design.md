@@ -183,3 +183,12 @@ To suppress a single false positive durably: add the range to the host's allow f
 6. Tuning of FEEDS_MAX_COVERAGE_V6_48 and FEEDS_MAX_CHURN_PCT against the first weeks of real diffs; both are deliberately generous first guesses with the mechanism being the point.
 
 Repo anchors: bin/ngmap.py:38-43, 73-75, 86-96, 140-142, 172-177, 195, 204-210, 254-261, 264-291, 338-339, 381-386, 389-420; bin/nodeguard-responder:38, 114-144, 146-216, 403; bin/nodeguard-status:61-95; bin/nodeguard-watchdog:15-17, 113-114, 175-177; etc/zabbix-userparameter-nodeguard.conf:8; deploy/deploy.sh:20-24, 32-37, 47, 51-58, 60-66, 86-90, 105; units/nodeguard-sweep.service:6; src/nodeguard_kern.c:29-42, 151-167; docs/adr/0003, 0004; hosts/example-gateway/nodeguard.env, responder.conf.
+## Amendments
+
+- 2026-09-05, first live run: FEEDS_MAX_COVERAGE_V6_48 raised from 4194304
+  to 46137344. Real DROP v6 coverage is 11488577 /48-equivalents (18
+  entries are /29 allocations at 524288 /48s each), so the original guess
+  was 2.7x too small; the new cap is 4x observed, matching the v4 cap's
+  ratio. The gate behaved exactly as designed on the miss: loud refusal,
+  zero writes, kv and diff emitted, adoption not armed. Open item 6
+  partially resolved by real data.
