@@ -19,7 +19,7 @@
 ## 3. Activation
 
 - [ ] 3.1 At least two dry-run diffs reviewed on real data per host
-- [ ] 3.2 DShield NC-license judgment recorded before its promotion
+- [x] 3.2 DShield NC-license judgment recorded before its promotion
 - [ ] 3.3 Promote spamhaus feeds on the internet gateway via
       apply --confirm; watch feeds kv and canary a full cycle
 - [ ] 3.4 Promote on the remote node; alarms proven live

@@ -192,3 +192,8 @@ Repo anchors: bin/ngmap.py:38-43, 73-75, 86-96, 140-142, 172-177, 195, 204-210, 
   ratio. The gate behaved exactly as designed on the miss: loud refusal,
   zero writes, kv and diff emitted, adoption not armed. Open item 6
   partially resolved by real data.
+- 2026-09-05, open item 5 resolved: DShield block.txt (CC BY-NC-SA 2.5)
+  is used for internal defensive filtering on personally-owned
+  infrastructure only; no commercial service consumes it and nothing is
+  redistributed. Judgment recorded by the operator; dshield_top20 is
+  cleared for promotion on both hosts.
