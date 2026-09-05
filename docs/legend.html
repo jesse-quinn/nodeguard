@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>nodeguard dashboard legend</title>
+<style>
+body { font-family: system-ui, -apple-system, sans-serif; font-size: 13px;
+       line-height: 1.55; margin: 10px 14px; color: #1f2c33; background: #fff; }
+b { color: #0b1f2a; }
+p { margin: 4px 0; }
+@media (prefers-color-scheme: dark) {
+  body { color: #d0d8dd; background: #0e1418; }
+  b { color: #ffffff; }
+}
+</style>
+</head>
+<body>
+<p><b>How to read this dashboard.</b> nodeguard is an XDP firewall in the NIC
+driver, fed by a passive Suricata IDS. Everything fails open: an empty graph or
+a dead component means traffic flows unfiltered, never an outage.</p>
+<p><b>firewall attached?</b> "attached" = the XDP program is loaded and
+enforcing; "detached" = no enforcement; "unknown" = the tooling cannot verify
+state. <b>kill switch</b>: 0 = enforcing, 1 = soft-off (run nodeguard-on to
+re-arm). <b>active blocks</b>: entries currently in the block maps.
+<b>responder unit</b>: the Suricata-alert-to-block daemon.</p>
+<p><b>XDP drop rate</b>: packets per second dropped in-driver from blocklisted
+sources; nonzero means an active block is being exercised. <b>XDP pass
+rate</b>: internet traffic from globally routed sources surviving to the
+blocklist check; near zero on the remote node is normal, it only sees its own
+return traffic. <b>Active blocks</b>: block-map population over time; entries
+expire in-kernel by TTL. <b>Suricata kernel drops</b>: capture ring overflow,
+cumulative; a climbing line means reduced detection coverage, not a traffic
+problem. <b>Allowlist / WireGuard pass rates</b>: traffic taking the
+never-blockable paths (private ranges, operator addresses, and the tailscale
+tunnel port).</p>
+</body>
+</html>
