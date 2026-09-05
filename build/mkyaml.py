@@ -82,6 +82,8 @@ def main():
             eve["filetype"] = "regular"
             eve["filename"] = "eve.json"
             eve["types"] = [{"alert": {"metadata": True, "tagged-packets": False}}]
+        elif "fast" in out:
+            out["fast"]["enabled"] = False
         elif "stats" in out:
             out["stats"]["enabled"] = False
 

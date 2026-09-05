@@ -30,14 +30,32 @@ nodeguard-off)
     mkdir -p "$NG_RUN"
     marker="$NG_RUN/manual_off"
     [ "${1:-}" = "--watchdog" ] && marker="$NG_RUN/watchdog_off"
-    ng_cfg_set 1 1
-    touch "$marker"
-    ng_log "kill switch SET ($(basename "$marker")); nodeguard passes everything" crit
+    # Verify by read-back: claiming soft-off while enforcement continues
+    # would be the one fail-closed lie this tool must never tell.
+    v=""
+    if ng_cfg_set 1 1; then
+        v=$(ng_cfg_get 1 2>/dev/null || true)
+    fi
+    if [ -n "$v" ] && [ "$v" != "0" ]; then
+        touch "$marker"
+        ng_log "kill switch SET ($(basename "$marker")); nodeguard passes everything" crit
+    else
+        ng_log "kill switch write FAILED; nodeguard is STILL ENFORCING (config[1] unchanged)" crit
+        exit 1
+    fi
     ;;
 nodeguard-on)
-    ng_cfg_set 1 0
-    rm -f "$NG_RUN/manual_off" "$NG_RUN/watchdog_off"
-    ng_log "kill switch cleared; nodeguard enforcing" notice
+    v=""
+    if ng_cfg_set 1 0; then
+        v=$(ng_cfg_get 1 2>/dev/null || true)
+    fi
+    if [ "$v" = "0" ]; then
+        rm -f "$NG_RUN/manual_off" "$NG_RUN/watchdog_off"
+        ng_log "kill switch cleared; nodeguard enforcing" notice
+    else
+        ng_log "kill switch clear FAILED; nodeguard still latched OFF; markers left in place" crit
+        exit 1
+    fi
     ;;
 *)
     echo "nodeguard-cli: unknown invocation name '$cmd'" >&2

@@ -23,6 +23,9 @@ char LICENSE[] SEC("license") = "GPL";
 
 #define NG_DISPATCHER_PRIORITY 10
 
+// 13-bit IPv4 fragment offset (UAPI linux/ip.h does not define IP_OFFSET).
+#define NG_IPV4_FRAG_OFFSET_MASK bpf_htons(0x1FFF)
+
 struct lpm_v4_key {
 	__u32 prefixlen;
 	__u8 addr[4];
@@ -138,15 +141,21 @@ static __always_inline int handle_v4(void *nh, void *data_end, __u64 wg_port)
 		return XDP_PASS;
 	}
 
-	if (ip->protocol == IPPROTO_UDP && wg_port) {
+	// Non-first fragments carry payload where the UDP header would be, so
+	// the port read is attempted only at fragment offset zero. A truncated
+	// UDP header or a non-first fragment cannot match the WireGuard port
+	// and falls through to the lookups (it is not a parse failure of the
+	// packet as a whole).
+	if (ip->protocol == IPPROTO_UDP && wg_port &&
+	    (ip->frag_off & NG_IPV4_FRAG_OFFSET_MASK) == 0) {
 		__u32 ihl = ip->ihl * 4;
 
 		if (ihl >= sizeof(*ip)) {
 			struct udphdr *udp = nh + ihl;
 
-			// A truncated or fragmented UDP header is not a parse
-			// failure of the packet as a whole; it simply cannot
-			// match the WireGuard port and falls through.
+			// wg_port is validated to 1-65535 at the write
+			// boundary (ngmap.py set-config); the cast documents
+			// the width, it does not sanitize.
 			if ((void *)(udp + 1) <= data_end &&
 			    bpf_ntohs(udp->dest) == (__u16)wg_port) {
 				count(ST_PASS_WGPORT);

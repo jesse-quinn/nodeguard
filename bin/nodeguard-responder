@@ -11,11 +11,16 @@ offender source address into the pinned block map via nodeguard-block:
      flow.pkts_toserver >= 2; UDP/ICMP only for SIDs promoted by hand
      ("udp-ok <sid>") with a written justification in sids.conf
   5. inbound: dest_ip in HOME_NETS, src_ip globally routable
-  6. src not covered by the live allow maps or the never-block ranges
-  7. rate caps not exceeded (30/min, 500/hour by default)
+  6. src not covered by the live allow maps (cached, refreshed on a short
+     TTL; an unreadable cache fails toward NOT blocking)
+  7. rate caps on new-block ATTEMPTS (30/min, 500 distinct/hour default),
+     accounted identically in dry-run and enforce mode
 
-ENFORCE=no (the mandatory first-run mode) logs WOULD BLOCK and touches
-nothing. Stdlib only; stdout goes to journald.
+TTL escalation counts OFFENSES (block windows), not alert lines: while a
+source is inside its blocked_until window, further alerts refresh
+last_seen only. Dry-run (ENFORCE=no, the mandatory first-run mode) logs
+WOULD BLOCK and simulates the same windows so the shadow stream is an
+accurate rehearsal of enforcement. Stdlib only; stdout goes to journald.
 """
 
 import collections
@@ -29,6 +34,7 @@ import time
 CONF = "/etc/nodeguard/responder.conf"
 NGMAP = "/usr/local/lib/nodeguard/ngmap.py"
 BLOCK = "/usr/local/sbin/nodeguard-block"
+ALLOW_CACHE_TTL = 60
 
 
 def log(msg):
@@ -56,8 +62,20 @@ def load_conf():
                     conf[k.strip()] = v.strip()
     except FileNotFoundError:
         log(f"responder: {CONF} missing, using defaults (ENFORCE=no)")
-    conf["HOME_NETS"] = [ipaddress.ip_network(n.strip())
-                         for n in conf["HOME_NETS"].split(",") if n.strip()]
+    nets = []
+    for n in conf["HOME_NETS"].split(","):
+        n = n.strip()
+        if not n:
+            continue
+        try:
+            net = ipaddress.ip_network(n, strict=False)
+        except ValueError as e:
+            log(f"responder: FATAL: HOME_NETS entry not a valid CIDR: {n} ({e})")
+            sys.exit(2)
+        if str(net) != n:
+            log(f"responder: HOME_NETS entry {n} normalized to {net}")
+        nets.append(net)
+    conf["HOME_NETS"] = nets
     if not conf["HOME_NETS"]:
         log("responder: FATAL: HOME_NETS is empty in responder.conf")
         sys.exit(2)
@@ -90,21 +108,64 @@ def load_sids(path):
     return optin, ignore, udp_ok
 
 
-def allow_check(ip):
-    """True if the address is protected (never blockable)."""
-    r = subprocess.run(["python3", NGMAP, "allow-check", ip],
-                       capture_output=True, text=True)
-    return r.returncode == 0
+class AllowCache:
+    """Snapshot of the live allow maps, refreshed on a short TTL. The
+    kernel allow map is the backstop; an unreadable cache fails toward
+    NOT blocking."""
+
+    def __init__(self):
+        self.nets = None
+        self.fetched = 0.0
+
+    def protected(self, ip_str):
+        """True if protected, False if blockable, None if undeterminable."""
+        now = time.monotonic()
+        if self.nets is None or now - self.fetched > ALLOW_CACHE_TTL:
+            try:
+                r = subprocess.run(
+                    ["python3", NGMAP, "allow-dump"],
+                    capture_output=True, text=True, timeout=30)
+                if r.returncode != 0:
+                    raise RuntimeError(r.stderr.strip())
+                self.nets = [ipaddress.ip_network(n)
+                             for n in json.loads(r.stdout)]
+                self.fetched = now
+            except Exception as e:
+                log(f"responder: allow-dump failed ({e}); "
+                    "failing toward NOT blocking")
+                self.nets = None
+                return None
+        ip = ipaddress.ip_address(ip_str)
+        return any(ip in n for n in self.nets
+                   if n.version == ip.version)
 
 
 class Journal:
+    """Per-IP offense history. count = completed block windows (drives the
+    TTL exponent); shadow_hits = dry-run sightings; blocked_until = wall
+    clock end of the current (real or shadow) window."""
+
     def __init__(self, path):
         self.path = path
         self.data = {}
         try:
             with open(path) as f:
-                self.data = json.load(f)
-        except (FileNotFoundError, json.JSONDecodeError):
+                raw = json.load(f)
+            if isinstance(raw, dict):
+                self.data = {ip: rec for ip, rec in raw.items()
+                             if isinstance(rec, dict)}
+            else:
+                raise ValueError("journal root is not an object")
+        except FileNotFoundError:
+            pass
+        except (json.JSONDecodeError, ValueError) as e:
+            bad = path + ".corrupt"
+            try:
+                os.replace(path, bad)
+                log(f"responder: journal unreadable ({e}); "
+                    f"moved to {bad}, starting fresh")
+            except OSError:
+                log(f"responder: journal unreadable ({e}); starting fresh")
             self.data = {}
         self.prune()
 
@@ -121,26 +182,51 @@ class Journal:
             json.dump(self.data, f)
         os.replace(tmp, self.path)
 
-    def record(self, ip, sid):
-        rec = self.data.setdefault(ip, {"count": 0, "first_seen": time.time()})
-        rec["count"] += 1
+    def _rec(self, ip):
+        return self.data.setdefault(
+            ip, {"count": 0, "shadow_hits": 0, "blocked_until": 0,
+                 "first_seen": time.time()})
+
+    def sighting(self, ip, sid):
+        """A non-offense observation (refresh, rate-capped, dry-run)."""
+        rec = self._rec(ip)
         rec["last_seen"] = time.time()
         rec["sid"] = sid
+        rec["shadow_hits"] = rec.get("shadow_hits", 0) + 1
         self.save()
-        return rec["count"]
+        return rec
+
+    def offense(self, ip, sid, ttl, shadow):
+        """A new block window (real, or simulated in dry-run)."""
+        rec = self._rec(ip)
+        rec["last_seen"] = time.time()
+        rec["sid"] = sid
+        rec["blocked_until"] = time.time() + ttl
+        if shadow:
+            rec["shadow_hits"] = rec.get("shadow_hits", 0) + 1
+        else:
+            rec["count"] = rec.get("count", 0) + 1
+        self.save()
+        return rec
 
 
 def follow(path):
-    """tail -F: follow the file across rotation; start at the end."""
+    """tail -F: follow across rotation. Seeks to END only on the FIRST
+    open (a daemon restart never replays); every reopen after a rotation
+    or truncation starts at offset 0, and the old fd is drained to EOF
+    first so lines appended between the last read and the rotation check
+    are not lost."""
     f = None
     inode = None
+    first_open = True
     while True:
         if f is None:
             try:
                 f = open(path)
-                st = os.fstat(f.fileno())
-                inode = st.st_ino
-                f.seek(0, os.SEEK_END)
+                inode = os.fstat(f.fileno()).st_ino
+                if first_open:
+                    f.seek(0, os.SEEK_END)
+                    first_open = False
                 log(f"responder: following {path} (inode {inode})")
             except FileNotFoundError:
                 time.sleep(2)
@@ -151,11 +237,11 @@ def follow(path):
             continue
         try:
             st = os.stat(path)
-            if st.st_ino != inode or st.st_size < f.tell():
-                f.close()
-                f = None  # rotated or truncated; reopen (from start of new file)
-                continue
         except FileNotFoundError:
+            st = None
+        if st is None or st.st_ino != inode or st.st_size < f.tell():
+            for line in f:  # drain stragglers from the rotated-away file
+                yield line
             f.close()
             f = None
             continue
@@ -176,102 +262,150 @@ def main():
     except FileNotFoundError:
         pass
     journal = Journal(conf["JOURNAL"])
-    minute = collections.deque()
-    hour = collections.deque()
+    allow = AllowCache()
+    minute = collections.deque()   # timestamps of new-block attempts
+    hour_seen = {}                 # ip -> first counted ts inside the hour
     last_prune = time.time()
-    capped = False
+    capped_episode = False
+    malformed = 0
+    last_malformed_report = time.time()
 
     log(f"responder: started, ENFORCE={'yes' if enforce else 'no'}, "
         f"{len(optin)} opt-in / {len(ignore)} ignored / {len(udp_ok)} udp-ok SIDs")
 
     for line in follow(conf["EVE"]):
-        now = time.time()
-        if now - last_prune > 86400:
-            journal.prune()
-            last_prune = now
         try:
-            mt = os.stat(conf["SIDS"]).st_mtime
-            if mt != sids_mtime:
-                optin, ignore, udp_ok = load_sids(conf["SIDS"])
-                sids_mtime = mt
-                log(f"responder: sids.conf reloaded "
-                    f"({len(optin)}/{len(ignore)}/{len(udp_ok)})")
-        except FileNotFoundError:
-            pass
+            now = time.time()
+            if now - last_prune > 86400:
+                journal.prune()
+                last_prune = now
+            if malformed and now - last_malformed_report > 60:
+                log(f"responder: {malformed} malformed/failed events "
+                    "since last report")
+                malformed = 0
+                last_malformed_report = now
+            try:
+                mt = os.stat(conf["SIDS"]).st_mtime
+                if mt != sids_mtime:
+                    optin, ignore, udp_ok = load_sids(conf["SIDS"])
+                    sids_mtime = mt
+                    log(f"responder: sids.conf reloaded "
+                        f"({len(optin)}/{len(ignore)}/{len(udp_ok)})")
+            except FileNotFoundError:
+                pass
 
-        try:
-            ev = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if ev.get("event_type") != "alert":
-            continue
-        alert = ev.get("alert", {})
-        sid = alert.get("signature_id", 0)
-        sev = alert.get("severity", 255)
-        sig = alert.get("signature", "?")
-        src = ev.get("src_ip", "")
-        dst = ev.get("dest_ip", "")
-        proto = ev.get("proto", "").upper()
-        flow = ev.get("flow", {})
+            try:
+                ev = json.loads(line)
+            except json.JSONDecodeError:
+                malformed += 1
+                continue
+            if not isinstance(ev, dict) or ev.get("event_type") != "alert":
+                continue
+            alert = ev.get("alert") or {}
+            flow = ev.get("flow") or {}
+            if not isinstance(alert, dict):
+                alert = {}
+            if not isinstance(flow, dict):
+                flow = {}
+            sid = alert.get("signature_id", 0)
+            sev = alert.get("severity", 255)
+            sig = alert.get("signature", "?")
+            src = ev.get("src_ip", "")
+            dst = ev.get("dest_ip", "")
+            proto = str(ev.get("proto", "")).upper()
 
-        if sid in ignore:
-            continue
-        if sev != 1 and sid not in optin:
-            continue
-
-        tag = f"sid={sid} sev={sev} src={src} dst={dst} proto={proto} sig={sig!r}"
-
-        # anti-spoofing gate
-        if proto != "TCP" and sid not in udp_ok:
-            log(f"WOULD BLOCK ({proto.lower() or 'unknown'}, not eligible): {tag}")
-            continue
-        if proto == "TCP":
-            if flow.get("pkts_toclient", 0) < 1 or flow.get("pkts_toserver", 0) < 2:
-                log(f"WOULD BLOCK (no bidirectional flow evidence): {tag}")
+            if sid in ignore:
+                continue
+            if sev != 1 and sid not in optin:
                 continue
 
-        # direction and address class
-        try:
-            src_ip = ipaddress.ip_address(src)
-            dst_ip = ipaddress.ip_address(dst)
-        except ValueError:
-            continue
-        if not any(dst_ip in n for n in conf["HOME_NETS"] if n.version == dst_ip.version):
-            continue  # not inbound
-        if not src_ip.is_global:
-            continue
+            tag = (f"sid={sid} sev={sev} src={src} dst={dst} "
+                   f"proto={proto} sig={sig!r}")
 
-        if allow_check(src):
-            log(f"skip (allowlisted/protected): {tag}")
-            continue
+            # anti-spoofing gate
+            if proto != "TCP" and sid not in udp_ok:
+                log(f"WOULD BLOCK ({proto.lower() or 'unknown'}, "
+                    f"not eligible): {tag}")
+                continue
+            if proto == "TCP":
+                if (flow.get("pkts_toclient", 0) < 1
+                        or flow.get("pkts_toserver", 0) < 2):
+                    log(f"WOULD BLOCK (no bidirectional flow evidence): {tag}")
+                    continue
 
-        # rate caps
-        while minute and minute[0] < now - 60:
-            minute.popleft()
-        while hour and hour[0] < now - 3600:
-            hour.popleft()
-        if len(minute) >= rate_min_cap or len(hour) >= rate_hour_cap:
-            if not capped:
-                log(f"RATE CAP hit ({len(minute)}/min, {len(hour)}/h); "
-                    f"suppressing new blocks: {tag}")
-                capped = True
-            continue
-        capped = False
+            # direction and address class
+            try:
+                src_ip = ipaddress.ip_address(src)
+                dst_ip = ipaddress.ip_address(dst)
+            except ValueError:
+                malformed += 1
+                continue
+            if not any(dst_ip in n for n in conf["HOME_NETS"]
+                       if n.version == dst_ip.version):
+                continue  # not inbound
+            if not src_ip.is_global:
+                continue
 
-        count = journal.record(src, sid)
-        ttl = min(ttl_base * (2 ** (count - 1)), ttl_max)
+            prot = allow.protected(src)
+            if prot is None:
+                log(f"skip (allowlist undeterminable, failing toward "
+                    f"NOT blocking): {tag}")
+                continue
+            if prot:
+                log(f"skip (allowlisted/protected): {tag}")
+                continue
 
-        if not enforce:
-            log(f"WOULD BLOCK: {tag} ttl={ttl} offense={count}")
-            continue
+            rec = journal.data.get(src, {})
+            if now < rec.get("blocked_until", 0):
+                # Same offense: the kernel (or the shadow window) is
+                # already covering it; refresh history only.
+                journal.sighting(src, sid)
+                continue
 
-        r = subprocess.run([BLOCK, src, str(ttl)], capture_output=True, text=True)
-        if r.returncode == 0:
+            # rate caps on new-block attempts, identical in both modes
+            while minute and minute[0] < now - 60:
+                minute.popleft()
+            for ip in [ip for ip, ts in hour_seen.items()
+                       if ts < now - 3600]:
+                del hour_seen[ip]
+            new_hour_entry = src not in hour_seen
+            if (len(minute) >= rate_min_cap
+                    or (new_hour_entry and len(hour_seen) >= rate_hour_cap)):
+                if not capped_episode:
+                    word = "RATE CAP" if enforce else "WOULD RATE-CAP"
+                    log(f"{word} hit ({len(minute)}/min, "
+                        f"{len(hour_seen)}/h distinct); suppressing new "
+                        f"blocks: {tag}")
+                    capped_episode = True
+                journal.sighting(src, sid)
+                continue
+            capped_episode = False
             minute.append(now)
-            hour.append(now)
-            log(f"BLOCKED: {tag} ttl={ttl} offense={count}")
-        else:
-            log(f"block FAILED ({r.stderr.strip()}): {tag}")
+            if new_hour_entry:
+                hour_seen[src] = now
+
+            ttl = min(ttl_base * (2 ** rec.get("count", 0)), ttl_max)
+            offense_no = rec.get("count", 0) + 1
+
+            if not enforce:
+                journal.offense(src, sid, ttl, shadow=True)
+                log(f"WOULD BLOCK: {tag} ttl={ttl} offense={offense_no}")
+                continue
+
+            r = subprocess.run([BLOCK, src, str(ttl)],
+                               capture_output=True, text=True)
+            if r.returncode == 0:
+                journal.offense(src, sid, ttl, shadow=False)
+                log(f"BLOCKED: {tag} ttl={ttl} offense={offense_no}")
+            else:
+                log(f"block FAILED ({r.stderr.strip()}): {tag}")
+        except Exception as e:  # never let one event kill the tail
+            malformed += 1
+            if time.time() - last_malformed_report > 60:
+                log(f"responder: event processing error: {e!r} "
+                    f"({malformed} since last report)")
+                malformed = 0
+                last_malformed_report = time.time()
 
 
 if __name__ == "__main__":

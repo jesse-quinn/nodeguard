@@ -8,10 +8,18 @@ ng_env
 kv=0
 [ "${1:-}" = "--kv" ] && kv=1
 
-attached=0
+# attach state: 1 attached, 0 detached, 2 unknown (xdp-loader failed;
+# the program may still be enforcing)
+ids=$(ng_prog_ids)
+rc=$?
 prog_id=""
-if prog_id=$(ng_prog_ids | head -1) && [ -n "$prog_id" ]; then
+if [ "$rc" -ne 0 ]; then
+    attached=2
+elif [ -n "$ids" ]; then
     attached=1
+    prog_id=$(printf '%s\n' "$ids" | head -1)
+else
+    attached=0
 fi
 
 ks="unpinned"
@@ -56,6 +64,11 @@ fi
 
 if [ "$kv" -eq 1 ]; then
     echo "ng.attached=$attached"
+    case "$attached" in
+    0) echo "ng.attach_state=detached" ;;
+    1) echo "ng.attach_state=attached" ;;
+    *) echo "ng.attach_state=unknown" ;;
+    esac
     echo "ng.prog_id=${prog_id:-0}"
     echo "ng.killswitch=${ks}"
     echo "ng.latch=$latch"
@@ -74,11 +87,11 @@ if [ "$kv" -eq 1 ]; then
 fi
 
 echo "== nodeguard status: $(hostname) ($IFACE) =="
-if [ "$attached" -eq 1 ]; then
-    echo "XDP:        ATTACHED (prog id $prog_id, native, dispatcher)"
-else
-    echo "XDP:        NOT ATTACHED (datapath pristine)"
-fi
+case "$attached" in
+1) echo "XDP:        ATTACHED (prog id $prog_id, native, dispatcher)" ;;
+0) echo "XDP:        NOT ATTACHED (datapath pristine)" ;;
+*) echo "XDP:        attach state UNKNOWN (xdp-loader status failed); program may still be enforcing" ;;
+esac
 case "$ks" in
 0) echo "Enforce:    ON (kill switch clear)" ;;
 unpinned) echo "Enforce:    maps not pinned (nodeguard-maps not run)" ;;

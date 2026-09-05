@@ -11,6 +11,11 @@ main branch.
 
 ## [Unreleased]
 
+### Fixed
+
+- 28 findings from a 36-agent adversarial review (1 blocker, 9 major, 18 minor), including: kill switch writes now verified by read-back with escalation to detach on failure; the sweep re-checks entries under an inter-process lock so a fresh re-block cannot be deleted; attach state is three-valued (attached, detached, unknown) end to end so a broken xdp-loader is never read as a pristine datapath; pre-existing dispatcher members are identity-checked, never blessed; the responder follows eve.json across logrotate without dropping alerts, counts offenses (block windows) rather than alert lines for TTL escalation, and accounts rate caps on attempts identically in dry-run and enforce modes; the IPv4 WireGuard-port pass ignores non-first fragments instead of misreading payload; the deploy owns /etc/logrotate.d/suricata, gates on systemd-analyze verify, and requires the suricata RPM up front; allowlist reconciliation gained a non-propagating systemctl reload verb so it never blips the WAN link.
+
+
 ### Added
 
 - XDP program (`src/nodeguard_kern.c`): a fail-open blocklist firewall loaded

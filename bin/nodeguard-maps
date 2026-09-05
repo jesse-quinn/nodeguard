@@ -16,7 +16,7 @@ GEN="$NG_RUN/allow-generated.txt"
 : > "$GEN"
 
 if [ -f /etc/nodeguard/protected.conf ]; then
-    while read -r directive arg _; do
+    while read -r directive arg _ || [ -n "$directive" ]; do
         case "$directive" in
         ''|'#'*) ;;
         cidr)

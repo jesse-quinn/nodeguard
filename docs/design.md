@@ -684,3 +684,7 @@ Known accepted limitations:
 | DERP | Tailscale's relay servers; their addresses are protected remotes |
 | Tailnet | The WireGuard-based overlay network used for management access |
 | et/open | The freely available Emerging Threats ruleset pulled by `suricata-update` |
+
+## Amendments
+
+- 2026-09-04, post adversarial implementation review (28 findings resolved): the IPv4 WireGuard-port pass applies only at fragment offset zero; non-first fragments of a blocked source's WireGuard datagrams are dropped, accepted because WireGuard sets DF and the operator's own paths are covered by the allowlist. The kill switch verifies by read-back and the watchdog escalates to detach if the soft-off write fails. Attach state is three-valued; an xdp-loader failure is treated as "unknown, assume enforcing", never as detached. Allowlist reconciliation is performed with "systemctl reload nodeguard-maps" (ExecReload); a restart of that unit propagates through Requires= and blips the link. The per-host device drop-in uses Wants= plus After= for the NIC device unit. The deploy script owns /etc/logrotate.d/suricata (rename-based rotation; the responder drains and reopens across it) and refuses to run before the suricata RPM is installed. Responder TTL escalation counts block windows, not alert lines, and rate caps count attempts identically in dry-run and enforce modes.

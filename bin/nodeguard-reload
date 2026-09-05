@@ -11,7 +11,7 @@ ng_env
 new_obj="${1:-$NG_OBJ}"
 [ -f "$new_obj" ] || { echo "no such object: $new_obj" >&2; exit 2; }
 
-old_ids=$(ng_prog_ids)
+old_ids=$(ng_prog_ids | tr '\n' ' ')
 if [ -z "$old_ids" ]; then
     echo "nodeguard is not attached on $IFACE; use systemctl start nodeguard-xdp" >&2
     exit 2
@@ -23,14 +23,23 @@ if ! xdp-loader load -m native -p "$NG_PIN" "$IFACE" "$new_obj"; then
 fi
 
 new_id=""
+extra=0
 for id in $(ng_prog_ids); do
     case " $old_ids " in
     *" $id "*) ;;
-    *) new_id="$id" ;;
+    *)
+        if [ -n "$new_id" ]; then extra=1; fi
+        new_id="$id"
+        ;;
     esac
 done
 if [ -z "$new_id" ]; then
     ng_log "reload: could not identify the new program id; manual inspection required" err
+    exit 1
+fi
+if [ "$extra" -eq 1 ]; then
+    ng_log "reload: dispatcher holds more than one unexpected nodeguard member; aborting and unloading the just-loaded program" err
+    xdp-loader unload "$IFACE" -i "$new_id"
     exit 1
 fi
 

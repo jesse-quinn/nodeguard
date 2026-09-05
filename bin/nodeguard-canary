@@ -71,6 +71,7 @@ while [ "$(date +%s)" -lt "$deadline" ]; do
     sleep 5
 done
 
+echo "no-confirm-rolled-back" > "$RESULT"
 ng_log "canary: no confirmation within 600 s; stopping nodeguard-xdp (self-recovery)" crit
 systemctl stop nodeguard-xdp.service
 exit 1

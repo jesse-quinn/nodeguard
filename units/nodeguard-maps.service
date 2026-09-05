@@ -7,6 +7,10 @@ Wants=network-online.target
 Type=oneshot
 RemainAfterExit=yes
 ExecStart=/usr/local/sbin/nodeguard-maps
+# The sanctioned allowlist-reconcile verb: reload jobs do not propagate
+# through nodeguard-xdp's Requires=, so no detach and no WAN link blip.
+# systemctl RESTART of this unit propagates and blips the link; use reload.
+ExecReload=/usr/local/sbin/nodeguard-maps
 
 [Install]
 WantedBy=multi-user.target

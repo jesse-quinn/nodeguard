@@ -14,8 +14,10 @@ Key layout (matches src/nodeguard_kern.c, x86_64):
 """
 
 import argparse
+import fcntl
 import ipaddress
 import json
+import os
 import struct
 import subprocess
 import sys
@@ -45,7 +47,10 @@ def die(msg, code=1):
 
 def bpftool(*args, parse_json=False):
     cmd = [BPFTOOL] + (["-j"] if parse_json else []) + list(args)
-    r = subprocess.run(cmd, capture_output=True, text=True)
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True)
+    except OSError as e:
+        raise RuntimeError(f"cannot execute {BPFTOOL}: {e}") from e
     if r.returncode != 0:
         raise RuntimeError(f"{' '.join(cmd)}: {r.stderr.strip()}")
     return json.loads(r.stdout) if parse_json else r.stdout
@@ -75,6 +80,33 @@ def args_to_bytes(hexlist):
     return bytes(int(x, 16) for x in hexlist)
 
 
+BLOCK_LOCK = "/run/nodeguard/block.lock"
+
+
+def block_lock():
+    """Inter-process lock serializing block-map write/delete pairs. Held
+    per key, never around a whole sweep, so a sweep delays a fresh block
+    by at most one lookup+delete."""
+    os.makedirs(os.path.dirname(BLOCK_LOCK), exist_ok=True)
+    f = open(BLOCK_LOCK, "w")
+    fcntl.flock(f, fcntl.LOCK_EX)
+    return f
+
+
+def lookup_value(path, key):
+    """Value bytes for one key, or None if absent."""
+    try:
+        e = bpftool("map", "lookup", "pinned", path, "key",
+                    *bytes_to_args(key), parse_json=True)
+    except RuntimeError as e:
+        if "ENOENT" in str(e) or "No such file or directory" in str(e):
+            return None
+        raise
+    if not e or "value" not in e:
+        return None
+    return args_to_bytes(e["value"])
+
+
 def map_path(net, kind):
     return f"{PIN}/{kind}{4 if net.version == 4 else 6}"
 
@@ -91,7 +123,9 @@ def dump_map(path):
         entries = bpftool("map", "dump", "pinned", path, parse_json=True)
     except RuntimeError as e:
         if "No such file" in str(e):
-            die(f"map {path} is not pinned; is nodeguard-maps.service running?")
+            raise RuntimeError(
+                f"map {path} is not pinned; is nodeguard-maps.service "
+                "running?") from e
         raise
     for e in entries:
         if "key" in e and "value" in e:
@@ -110,7 +144,10 @@ def delete_key(path, key):
         bpftool("map", "delete", "pinned", path, "key", *bytes_to_args(key))
     except RuntimeError as e:
         if "No such file or directory" in str(e) or "ENOENT" in str(e):
-            return False  # already gone; tolerated by contract
+            if not os.path.exists(path):
+                die(f"map {path} is not pinned; is nodeguard-maps.service "
+                    "running?")
+            return False  # key already gone; tolerated by contract
         raise
     return True
 
@@ -158,6 +195,9 @@ def cmd_block(a):
             "pass --i-mean-it if this is deliberate")
     if a.permanent and not a.i_mean_it:
         die("--permanent requires --i-mean-it")
+    if not a.permanent and a.ttl <= 0:
+        die(f"--ttl {a.ttl} would create an already-expired entry that "
+            "enforces nothing; permanent blocks require --permanent --i-mean-it")
     reason = is_protected(net.network_address, allow_entries_live())
     if reason is None and net.prefixlen < net.max_prefixlen:
         # For a CIDR, also refuse if it CONTAINS a protected range.
@@ -169,7 +209,11 @@ def cmd_block(a):
         die(f"refusing to block {net}: {reason}")
     expiry = 0 if a.permanent else mono_ns() + a.ttl * 10**9
     value = struct.pack("<QQ", expiry, 0)
-    update_map(map_path(net, "block"), key_bytes(net), value)
+    lock = block_lock()
+    try:
+        update_map(map_path(net, "block"), key_bytes(net), value)
+    finally:
+        lock.close()
     print(f"blocked {net} "
           + ("permanently" if a.permanent else f"for {a.ttl}s"))
 
@@ -219,14 +263,28 @@ def cmd_sweep(_a):
     n = 0
     for ver in (4, 6):
         path = f"{PIN}/block{ver}"
-        # Snapshot then delete; get_next_key races surface as ENOENT which
-        # delete_key tolerates. A second pass is unnecessary: anything missed
-        # is already unenforced (in-kernel expiry) and caught next run.
+        # Two race directions: a snapshot entry may vanish (ENOENT is
+        # tolerated) and a snapshot key may be re-blocked after the
+        # snapshot. Each candidate is therefore re-looked-up under the
+        # same lock cmd_block writes with, and deleted only if it is
+        # still expired against the sweep-start clock. On any other
+        # lookup error the delete is skipped: leaving a corpse is
+        # harmless, deleting a fresh block is not.
         for k, v in list(dump_map(path)):
             expiry, _hits = struct.unpack("<QQ", v)
-            if expiry and now >= expiry:
-                if delete_key(path, k):
-                    n += 1
+            if not (expiry and now >= expiry):
+                continue
+            lock = block_lock()
+            try:
+                cur = lookup_value(path, k)
+                if cur is None:
+                    continue
+                cur_expiry, _ = struct.unpack("<QQ", cur)
+                if cur_expiry and now >= cur_expiry:
+                    if delete_key(path, k):
+                        n += 1
+            finally:
+                lock.close()
     print(f"swept {n} expired entries")
 
 
@@ -253,16 +311,27 @@ def cmd_get_config(a):
 
 
 def cmd_set_config(a):
+    if a.slot == 0 and not (1 <= a.value <= 65535):
+        die(f"wg_port {a.value} out of range 1-65535")
     update_map(f"{PIN}/config", struct.pack("<I", a.slot),
                struct.pack("<Q", a.value))
 
 
 def cmd_allow_check(a):
-    reason = is_protected(a.target, allow_entries_live())
+    # Exit 0 = protected, 1 = blockable, 3 = could not determine (callers
+    # must fail toward NOT blocking on 3).
+    try:
+        reason = is_protected(a.target, allow_entries_live())
+    except (RuntimeError, OSError, ValueError) as e:
+        die(f"allow-check failed for {a.target}: {e}", code=3)
     if reason:
         print(reason)
         sys.exit(0)
     sys.exit(1)
+
+
+def cmd_allow_dump(_a):
+    print(json.dumps([str(n) for n in allow_entries_live()]))
 
 
 def cmd_create_maps(a):
@@ -383,6 +452,9 @@ def main():
     ac = sub.add_parser("allow-check")
     ac.add_argument("target")
     ac.set_defaults(fn=cmd_allow_check)
+
+    ad = sub.add_parser("allow-dump")
+    ad.set_defaults(fn=cmd_allow_dump)
 
     cm = sub.add_parser("create-maps")
     cm.add_argument("--spec", required=True)
