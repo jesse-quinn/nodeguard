@@ -14,7 +14,7 @@
 - [x] 2.1 shellcheck, py_compile, systemd-analyze verify
 - [x] 2.2 Live fetch of each feed URL confirms the parser grammars
       (DShield grammar and drop_v6 prefix floor especially)
-- [ ] 2.3 Deploy to both hosts; full dry-run cycle produces last-diff.txt
+- [x] 2.3 Deploy to both hosts; full dry-run cycle produces last-diff.txt
 
 ## 3. Activation
 
