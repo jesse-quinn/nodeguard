@@ -115,7 +115,7 @@ for u in nodeguard-maps.service nodeguard-xdp.service nodeguard-responder.servic
     fi
 done
 grep -q '/var/log/suricata/\*.json' /etc/logrotate.d/suricata || { echo "logrotate config missing eve.json coverage"; verify_fail=1; }
-grep -q copytruncate /etc/logrotate.d/suricata && { echo "logrotate config uses copytruncate (loses lines)"; verify_fail=1; }
+grep -vE '^[[:space:]]*#' /etc/logrotate.d/suricata | grep -q copytruncate && { echo "logrotate config uses copytruncate (loses lines)"; verify_fail=1; }
 [ "$verify_fail" -eq 0 ] || { echo "deploy verification FAILED"; exit 4; }
 sha256sum /usr/local/lib/nodeguard/nodeguard_kern.o
 rm -rf "$S"
