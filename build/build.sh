@@ -34,13 +34,13 @@ SPEC_PIN=/sys/fs/bpf/ngspec
 rm -rf "$SPEC_PIN"
 ip netns add ngspecns
 cleanup_spec() {
-    ip netns exec ngspecns xdp-loader unload lo --all 2>/dev/null || true
+    nsenter --net=/run/netns/ngspecns xdp-loader unload lo --all 2>/dev/null || true
     ip netns del ngspecns 2>/dev/null || true
     rm -rf "$SPEC_PIN"
 }
 trap cleanup_spec EXIT
-ip netns exec ngspecns ip link set lo up
-ip netns exec ngspecns xdp-loader load -m skb -p "$SPEC_PIN" lo "$OUT/nodeguard_kern.o"
+nsenter --net=/run/netns/ngspecns ip link set lo up
+nsenter --net=/run/netns/ngspecns xdp-loader load -m skb -p "$SPEC_PIN" lo "$OUT/nodeguard_kern.o"
 python3 - "$SPEC_PIN" "$OUT/nodeguard-maps.spec" <<'PYEOF'
 import json, subprocess, sys
 pin, spec = sys.argv[1], sys.argv[2]
@@ -74,11 +74,11 @@ python3 "$REPO/bin/ngmap.py" create-maps --spec "$OUT/nodeguard-maps.spec"
 ip netns add ngtest
 trap 'ip netns del ngtest 2>/dev/null || true; rm -rf "$PIN"' EXIT
 # The pin root is shared (bpffs is not per-netns), which matches production.
-ip netns exec ngtest ip link set lo up
-ip netns exec ngtest xdp-loader load -m skb -p "$PIN" lo "$OUT/nodeguard_kern.o"
-ip netns exec ngtest xdp-loader status lo
+nsenter --net=/run/netns/ngtest ip link set lo up
+nsenter --net=/run/netns/ngtest xdp-loader load -m skb -p "$PIN" lo "$OUT/nodeguard_kern.o"
+nsenter --net=/run/netns/ngtest xdp-loader status lo
 # 3. Map identity: the attached program must use the pre-created pins.
-prog_id=$(ip netns exec ngtest xdp-loader status lo | awk '$1=="=>" && $3=="nodeguard" {print $4}')
+prog_id=$(nsenter --net=/run/netns/ngtest xdp-loader status lo | awk '$1=="=>" && $3=="nodeguard" {print $4}')
 [ -n "$prog_id" ] || { echo "REHEARSAL FAIL: nodeguard not in dispatcher"; exit 1; }
 prog_maps=$(bpftool prog show id "$prog_id" -j | python3 -c 'import json,sys; print(" ".join(str(i) for i in json.load(sys.stdin).get("map_ids", [])))')
 for m in allow4 allow6 block4 block6 config stats; do
@@ -96,7 +96,7 @@ python3 "$REPO/bin/ngmap.py" set-config 0 41641
 python3 "$REPO/bin/ngmap.py" unblock 203.0.113.7
 python3 "$REPO/bin/ngmap.py" sweep
 # 5. Unload by id, never --all.
-ip netns exec ngtest xdp-loader unload lo -i "$prog_id"
+nsenter --net=/run/netns/ngtest xdp-loader unload lo -i "$prog_id"
 echo "== rehearsal PASSED =="
 
 echo "== per-host suricata.yaml =="
