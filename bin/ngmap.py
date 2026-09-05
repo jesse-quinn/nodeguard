@@ -32,6 +32,17 @@ STAT_NAMES = [
     "pass_allowlist", "pass_wgport", "pass_nonip", "pass_parsefail",
 ]
 
+# INVARIANT: lockstep with the stats2 enum in src/nodeguard_kern.c;
+# append-only, reserved slots unnamed.
+STATS2_NAMES = [
+    "tcp_synfin", "tcp_synrst", "tcp_null", "tcp_xmas",
+    "ttl_low", "frag_v4", "frag_v6",
+]
+
+MAPSTAT = "/var/lib/nodeguard/mapstat.kv"
+SWEEP_HITS = "/var/lib/nodeguard/sweep_hits.json"
+SPEC = "/usr/local/lib/nodeguard/nodeguard-maps.spec"
+
 # INVARIANT: addresses that must never be blockable regardless of
 # allow-map contents; enforced by is_protected() for every block and
 # allow-check call in this file.
@@ -272,8 +283,14 @@ def cmd_flush(_a):
 
 
 def cmd_sweep(_a):
+    """TTL garbage collection PLUS the map-stats cache. SAFETY: this is
+    the ONLY writer of mapstat.kv (single-writer rule, ADR 0007); the
+    1-minute kv path reads the cache and never walks a trie."""
+    walk_start = time.monotonic()
     now = mono_ns()
     n = 0
+    counts = {4: 0, 6: 0}
+    hits_now = {}
     for ver in (4, 6):
         path = f"{PIN}/block{ver}"
         # SAFETY: two race directions guarded here - a snapshot entry may
@@ -284,7 +301,9 @@ def cmd_sweep(_a):
         # lookup error the delete is skipped: leaving a corpse is
         # harmless, deleting a fresh block is not.
         for k, v in list(dump_map(path)):
-            expiry, _hits = struct.unpack("<QQ", v)
+            expiry, hits = struct.unpack("<QQ", v)
+            counts[ver] += 1
+            hits_now[str(decode_key(k))] = hits
             if not (expiry and now >= expiry):
                 continue
             lock = block_lock()
@@ -300,19 +319,85 @@ def cmd_sweep(_a):
                 lock.close()
     print(f"swept {n} expired entries")
 
+    # Cache write: entry counts, utilization vs the installed spec, and
+    # hits ranked by DELTA since the previous walk (answers "who is
+    # hitting us NOW"; the cumulative figure rides as a secondary field).
+    try:
+        prev = json.load(open(SWEEP_HITS))
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        prev = {}
+    deltas = {c: h - prev.get(c, 0) for c, h in hits_now.items()
+              if h - prev.get(c, 0) > 0}
+    top = sorted(deltas.items(), key=lambda kv: -kv[1])[:5]
+    top_txt = ",".join(f"{c}:{d}" for c, d in top) or "none"
+    top1 = top[0][1] if top else 0
+    caps = _spec_max_entries()
+    walk_ms = int((time.monotonic() - walk_start) * 1000)
+    lines = [
+        f"ng.blocks={counts[4] + counts[6]}",
+        f"ng.blocks_v4={counts[4]}",
+        f"ng.blocks_v6={counts[6]}",
+        f"ng.top1_hits={top1}",
+        f"ng.top_blocked={top_txt}",
+        f"ng.sweep_walk_ms={walk_ms}",
+        f"ng.sweep_ts={int(time.time())}",
+    ]
+    if caps.get("block4"):
+        lines.append(f"ng.util_v4_pct={100 * counts[4] // caps['block4']}")
+    if caps.get("block6"):
+        lines.append(f"ng.util_v6_pct={100 * counts[6] // caps['block6']}")
+    try:
+        os.makedirs(os.path.dirname(MAPSTAT), exist_ok=True)
+        with open(SWEEP_HITS + ".tmp", "w") as f:
+            json.dump(hits_now, f)
+        os.replace(SWEEP_HITS + ".tmp", SWEEP_HITS)
+        with open(MAPSTAT + ".tmp", "w") as f:
+            f.write("\n".join(lines) + "\n")
+        os.replace(MAPSTAT + ".tmp", MAPSTAT)
+    except OSError as e:
+        print(f"mapstat cache write failed: {e}", file=sys.stderr)
 
-def cmd_stats(a):
+
+def _percpu_totals(path, names):
     out = {}
-    for k, vals in dump_map(f"{PIN}/stats"):
+    for k, vals in dump_map(path):
         idx = struct.unpack("<I", k)[0]
         total = sum(struct.unpack("<Q", v)[0] for v in vals)
-        if idx < len(STAT_NAMES):
-            out[STAT_NAMES[idx]] = total
+        if idx < len(names):
+            out[names[idx]] = total
+    return out
+
+
+def cmd_stats(a):
+    out = _percpu_totals(f"{PIN}/stats", STAT_NAMES)
     if a.json:
         print(json.dumps(out))
     else:
         for name, v in out.items():
             print(f"{name:<16} {v}")
+
+
+def cmd_stats2(a):
+    out = _percpu_totals(f"{PIN}/stats2", STATS2_NAMES)
+    if a.json:
+        print(json.dumps(out))
+    else:
+        for name, v in out.items():
+            print(f"{name:<16} {v}")
+
+
+def _spec_max_entries():
+    caps = {}
+    try:
+        with open(SPEC) as f:
+            for line in f:
+                line = line.split("#", 1)[0].strip()
+                if line:
+                    parts = line.split()
+                    caps[parts[0]] = int(parts[4])
+    except (FileNotFoundError, IndexError, ValueError):
+        pass
+    return caps
 
 
 def cmd_get_config(a):
@@ -455,6 +540,10 @@ def main():
     st = sub.add_parser("stats")
     st.add_argument("--json", action="store_true")
     st.set_defaults(fn=cmd_stats)
+
+    s2 = sub.add_parser("stats2")
+    s2.add_argument("--json", action="store_true")
+    s2.set_defaults(fn=cmd_stats2)
 
     gc = sub.add_parser("get-config")
     gc.add_argument("slot", type=int)

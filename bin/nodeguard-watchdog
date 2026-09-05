@@ -16,6 +16,136 @@ if [ -d /run/zabbix ]; then
     /usr/local/sbin/nodeguard-status --kv > /run/zabbix/nodeguard.kv.tmp 2>/dev/null         && chmod 0644 /run/zabbix/nodeguard.kv.tmp         && mv -f /run/zabbix/nodeguard.kv.tmp /run/zabbix/nodeguard.kv || true
 fi
 
+# --- volumetric anomaly detector (ADR 0007 layer 1) ---
+# Runs off the kv snapshot just written: one consistent source. Shadow by
+# default; observe-only in every mode (never touches the kill switch,
+# latch files, or any map).
+if [ "${WD_ANOM_MODE:-shadow}" != "off" ] && [ -f /run/zabbix/nodeguard.kv ]; then
+    WD_ANOM_MODE="${WD_ANOM_MODE:-shadow}"     WD_ANOM_K="${WD_ANOM_K:-8}" WD_ANOM_FLOOR="${WD_ANOM_FLOOR:-500}"     WD_ANOM_TRIP="${WD_ANOM_TRIP:-3}" WD_ANOM_ADAPT="${WD_ANOM_ADAPT:-30}"     python3 - <<'ANOMPY' | while read -r line; do ng_log "$line" crit; done
+import json, os, time
+
+KV = "/run/zabbix/nodeguard.kv"
+STATE = "/var/lib/nodeguard/wd_baseline.json"
+OUT = "/var/lib/nodeguard/wd_anomaly.kv"
+MODE = os.environ["WD_ANOM_MODE"]
+K = float(os.environ["WD_ANOM_K"])
+FLOOR = float(os.environ["WD_ANOM_FLOOR"])
+TRIP = int(os.environ["WD_ANOM_TRIP"])
+ADAPT = int(os.environ["WD_ANOM_ADAPT"])
+ALPHA = 0.05
+
+kv = {}
+for ln in open(KV):
+    if "=" in ln:
+        k, v = ln.strip().split("=", 1)
+        kv[k] = v
+
+def num(key):
+    try:
+        return int(kv[key])
+    except (KeyError, ValueError):
+        return None
+
+metrics = {}
+d4, d6 = num("ng.drop_v4"), num("ng.drop_v6")
+if d4 is not None:
+    metrics["drop_total"] = d4 + (d6 or 0)
+if num("ng.pass") is not None:
+    metrics["pass"] = num("ng.pass")
+san = [num(f"ng.tcp_{c}") for c in ("synfin", "synrst", "null", "xmas")]
+if all(v is not None for v in san):
+    metrics["sanity_total"] = sum(san)
+if num("ng.suricata_alerts") is not None:
+    metrics["suricata_alerts"] = num("ng.suricata_alerts")
+
+regime = (kv.get("ng.killswitch"), kv.get("ng.attach_state"),
+          kv.get("ng.feeds_enforce"), kv.get("ng.prog_id"))
+
+try:
+    st = json.load(open(STATE))
+except Exception:
+    st = {}
+counts = st.get("counts", {"anomaly_count": 0, "anomaly_shadow_count": 0,
+                           "anomaly_last_ts": 0})
+
+def reseed(reason):
+    # SAFETY: regime changes (latch flip, attach change, feeds flip,
+    # reload) discard the cycle and reseed, so recovery or a planned
+    # change can never register as an anomaly.
+    json.dump({"regime": list(regime), "last": {m: v for m, v in metrics.items()},
+               "ewma": st.get("ewma", {}) if reason == "negative" else {},
+               "streak": 0, "consec": 0, "counts": counts}, open(STATE + ".tmp", "w"))
+    os.replace(STATE + ".tmp", STATE)
+
+if st.get("regime") != list(regime) or "last" not in st:
+    reseed("regime")
+else:
+    ewma = st.get("ewma", {})
+    consec = st.get("consec", 0)
+    streak = st.get("streak", 0)
+    anomalous = []
+    negative = False
+    for m, v in metrics.items():
+        last = st["last"].get(m)
+        if last is None:
+            continue
+        delta = v - last
+        if delta < 0:
+            negative = True
+            break
+        e = ewma.get(m)
+        if e is None:
+            ewma[m] = {"m": float(delta), "d": float(FLOOR)}
+            continue
+        thresh = max(FLOOR, e["m"] + K * e["d"])
+        if delta > thresh:
+            anomalous.append((m, delta, int(thresh)))
+            # SAFETY: an at-or-above-threshold cycle does not update the
+            # baseline, so the detector cannot be trained into silence
+            # by the event it measures; a bounded skip streak forces
+            # adaptation to legitimate level shifts.
+            if streak >= ADAPT:
+                dev = abs(delta - e["m"])
+                e["m"] += ALPHA * (delta - e["m"])
+                e["d"] += ALPHA * (dev - e["d"])
+        else:
+            dev = abs(delta - e["m"])
+            e["m"] += ALPHA * (delta - e["m"])
+            e["d"] += ALPHA * (dev - e["d"])
+    if negative:
+        reseed("negative")
+    else:
+        if anomalous:
+            streak += 1
+            consec += 1
+            if consec >= TRIP:
+                which = ", ".join(f"{m} delta={d} thresh={t}"
+                                  for m, d, t in anomalous)
+                if MODE == "on":
+                    counts["anomaly_count"] += 1
+                else:
+                    counts["anomaly_shadow_count"] += 1
+                counts["anomaly_last_ts"] = int(time.time())
+                print(f"watchdog: VOLUMETRIC ANOMALY ({MODE}): {which}; "
+                      f"count={counts['anomaly_count']} "
+                      f"shadow={counts['anomaly_shadow_count']}")
+                consec = 0
+        else:
+            consec = 0
+            streak = 0
+        json.dump({"regime": list(regime), "last": {m: v for m, v in metrics.items()},
+                   "ewma": ewma, "streak": streak, "consec": consec,
+                   "counts": counts}, open(STATE + ".tmp", "w"))
+        os.replace(STATE + ".tmp", STATE)
+
+with open(OUT + ".tmp", "w") as f:
+    f.write(f"ng.anomaly_count={counts['anomaly_count']}\n"
+            f"ng.anomaly_shadow_count={counts['anomaly_shadow_count']}\n"
+            f"ng.anomaly_last_ts={counts['anomaly_last_ts']}\n")
+os.replace(OUT + ".tmp", OUT)
+ANOMPY
+fi
+
 # Nothing to guard before the maps exist.
 [ -e "$NG_PIN/config" ] || exit 0
 

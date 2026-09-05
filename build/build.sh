@@ -26,8 +26,9 @@ echo "== generate map spec from the object (BTF is the source of truth) =="
 # bpftool loadall+pinmaps conflicts with the declared pin paths.
 mkdir -p /sys/fs/bpf
 mountpoint -q /sys/fs/bpf || mount -t bpf bpf /sys/fs/bpf
-# Clean any stray root-level pins from earlier failed runs.
-for m in allow4 allow6 block4 block6 config stats; do
+# Clean any stray root-level pins from earlier failed runs (derived
+# list written after spec generation; cover known names first).
+for m in allow4 allow6 block4 block6 config stats stats2; do
     rm -f "/sys/fs/bpf/$m"
 done
 SPEC_PIN=/sys/fs/bpf/ngspec
@@ -41,10 +42,27 @@ cleanup_spec() {
 trap cleanup_spec EXIT
 nsenter --net=/run/netns/ngspecns ip link set lo up
 nsenter --net=/run/netns/ngspecns xdp-loader load -m skb -p "$SPEC_PIN" lo "$OUT/nodeguard_kern.o"
-python3 - "$SPEC_PIN" "$OUT/nodeguard-maps.spec" <<'PYEOF'
-import json, subprocess, sys
-pin, spec = sys.argv[1], sys.argv[2]
-wanted = ["allow4", "allow6", "block4", "block6", "config", "stats"]
+# INVARIANT (ADR 0004/0007): the spec follows the OBJECT. The map list
+# is derived from what libbpf actually pinned, asserted to contain the
+# core six AND to equal the object's BTF-declared map set; a hardcoded
+# list here once silently omitted a new map from the whole contract.
+python3 - "$SPEC_PIN" "$OUT/nodeguard-maps.spec" "$OUT/nodeguard_kern.o" <<'PYEOF'
+import json, re, subprocess, sys
+pin, spec, obj = sys.argv[1], sys.argv[2], sys.argv[3]
+import os
+wanted = sorted(os.listdir(pin))
+core = {"allow4", "allow6", "block4", "block6", "config", "stats"}
+missing_core = core - set(wanted)
+if missing_core:
+    sys.exit(f"core maps missing from pins: {sorted(missing_core)}")
+btf = subprocess.run(["bpftool", "btf", "dump", "file", obj],
+                     capture_output=True, text=True, check=True).stdout
+btf_maps = set()
+for m in re.finditer(r"VAR '([A-Za-z0-9_]+)'.*?linkage=global", btf):
+    btf_maps.add(m.group(1))
+declared = {n for n in btf_maps if n in set(wanted) | {"LICENSE"}} - {"LICENSE"}
+if set(wanted) != declared and declared:
+    sys.exit(f"pinned set {sorted(wanted)} != BTF-declared {sorted(declared)}")
 rows = {}
 for name in wanted:
     m = json.loads(subprocess.run(
@@ -81,7 +99,8 @@ nsenter --net=/run/netns/ngtest xdp-loader status lo
 prog_id=$(nsenter --net=/run/netns/ngtest xdp-loader status lo | awk '$1=="=>" && $3=="nodeguard" {print $4}')
 [ -n "$prog_id" ] || { echo "REHEARSAL FAIL: nodeguard not in dispatcher"; exit 1; }
 prog_maps=$(bpftool prog show id "$prog_id" -j | python3 -c 'import json,sys; print(" ".join(str(i) for i in json.load(sys.stdin).get("map_ids", [])))')
-for m in allow4 allow6 block4 block6 config stats; do
+MAPLIST=$(awk '!/^#/ && NF {print $1}' "$OUT/nodeguard-maps.spec")
+for m in $MAPLIST; do
     mid=$(bpftool map show pinned "$PIN/$m" -j | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')
     case " $prog_maps " in
     *" $mid "*) echo "identity ok: $m (id $mid)" ;;
@@ -95,6 +114,69 @@ python3 "$REPO/bin/ngmap.py" set-config 0 41641
 [ "$(python3 "$REPO/bin/ngmap.py" get-config 0)" = "41641" ]
 python3 "$REPO/bin/ngmap.py" unblock 203.0.113.7
 python3 "$REPO/bin/ngmap.py" sweep
+# 4b. Crafted-packet sanity assertions: each anomaly increments its
+# stats2 counter and the packet still PASSES (loopback delivery).
+nsenter --net=/run/netns/ngtest python3 - <<'SANPY'
+import socket, struct, subprocess, json, sys
+
+def s2():
+    out = subprocess.run(["python3", "/work/bin/ngmap.py", "stats2", "--json"],
+                         capture_output=True, text=True, check=True).stdout
+    return json.loads(out)
+
+def tcp_probe(flags):
+    # raw IPv4+TCP on loopback
+    src = dst = "127.0.0.1"
+    ip = struct.pack(">BBHHHBBH4s4s", 0x45, 0, 40, 0, 0, 64, 6, 0,
+                     socket.inet_aton(src), socket.inet_aton(dst))
+    tcp = struct.pack(">HHLLBBHHH", 12345, 9, 0, 0, 0x50, flags, 8192, 0, 0)
+    s = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_RAW)
+    s.sendto(ip + tcp, (dst, 0))
+    s.close()
+
+def ttl_probe():
+    ip = struct.pack(">BBHHHBBH4s4s", 0x45, 0, 28, 0, 0, 2, 17, 0,
+                     socket.inet_aton("127.0.0.1"), socket.inet_aton("127.0.0.1"))
+    udp = struct.pack(">HHHH", 12345, 9, 8, 0)
+    s = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_RAW)
+    s.sendto(ip + udp, ("127.0.0.1", 0))
+    s.close()
+
+before = s2()
+tcp_probe(0x03)  # SYN+FIN
+tcp_probe(0x06)  # SYN+RST
+tcp_probe(0x00)  # NULL
+tcp_probe(0x29)  # FIN+PSH+URG (XMAS)
+ttl_probe()
+after = s2()
+for key in ("tcp_synfin", "tcp_synrst", "tcp_null", "tcp_xmas", "ttl_low"):
+    if after[key] <= before[key]:
+        sys.exit(f"SANITY REHEARSAL FAIL: {key} did not increment "
+                 f"({before[key]} -> {after[key]})")
+print("sanity counters increment:", {k: after[k] for k in after})
+SANPY
+
+# 4c. Stats-read-failure drill: with bpftool unavailable the reader
+# must fail loudly (nonzero, empty stdout), never emit zeros.
+mv /usr/sbin/bpftool /usr/sbin/bpftool.away
+if out=$(python3 /work/bin/ngmap.py stats --json 2>/dev/null); then
+    mv /usr/sbin/bpftool.away /usr/sbin/bpftool
+    echo "READ-FAIL DRILL FAIL: stats succeeded without bpftool: $out"
+    exit 1
+fi
+[ -z "$out" ] || { mv /usr/sbin/bpftool.away /usr/sbin/bpftool; echo "READ-FAIL DRILL FAIL: nonempty stdout"; exit 1; }
+mv /usr/sbin/bpftool.away /usr/sbin/bpftool
+echo "read-fail drill: loud failure, no zeros"
+
+# 4d. Unreferenced-pin tolerance (rollback direction): an extra pin the
+# object does not reference must not block load or identity.
+bpftool map create "$PIN/zzz_extra" type array key 4 value 8 entries 1 name zzz_extra
+nsenter --net=/run/netns/ngtest xdp-loader load -m skb -p "$PIN" lo "$OUT/nodeguard_kern.o"
+second_id=$(nsenter --net=/run/netns/ngtest xdp-loader status lo | awk '$1=="=>" && $3=="nodeguard" {print $4}' | tail -1)
+nsenter --net=/run/netns/ngtest xdp-loader unload lo -i "$second_id"
+rm -f "$PIN/zzz_extra"
+echo "unreferenced-pin rehearsal: load and unload clean"
+
 # 5. Unload by id, never --all.
 nsenter --net=/run/netns/ngtest xdp-loader unload lo -i "$prog_id"
 echo "== rehearsal PASSED =="

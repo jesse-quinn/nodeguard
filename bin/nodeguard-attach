@@ -24,8 +24,14 @@ for id in $existing; do
 done
 if [ -n "$verified" ]; then
     echo "$verified" > "$NG_RUN/prog_id"
+    echo "$verified" > "$NG_RUN/expected_prog_id"
     ng_log "nodeguard already attached on $IFACE (prog id $verified), map identity verified"
     exit 0
+fi
+
+if ! ng_spec_pins_present; then
+    ng_log "attach refused: spec-listed pins missing; host runs OPEN" crit
+    exit 1
 fi
 
 if ! xdp-loader load -m native -p "$NG_PIN" "$IFACE" "$NG_OBJ"; then
@@ -50,5 +56,6 @@ if ! ng_verify_map_identity "$prog_id"; then
 fi
 
 echo "$prog_id" > "$NG_RUN/prog_id"
+echo "$prog_id" > "$NG_RUN/expected_prog_id"
 ng_log "nodeguard attached on $IFACE, prog id $prog_id, map identity verified"
 exit 0

@@ -35,6 +35,7 @@ import sys
 import time
 
 CONF = "/etc/nodeguard/responder.conf"
+RESP_KV = "/run/nodeguard/responder.kv"
 NGMAP = "/usr/local/lib/nodeguard/ngmap.py"
 BLOCK = "/usr/local/sbin/nodeguard-block"
 ALLOW_CACHE_TTL = 60
@@ -275,6 +276,28 @@ def main():
     capped_episode = False
     malformed = 0
     last_malformed_report = time.time()
+    # security-event telemetry (design: monitoring chain 5g); flushed at
+    # most every 15s so a burst does not turn into an fsync storm
+    sec = {"resp_alerts_seen": 0, "resp_blocks_issued": 0,
+           "resp_dryrun_would_block": 0, "resp_last_alert_ts": 0,
+           "resp_last_action_ts": 0}
+    sec_dirty = True
+    sec_last_flush = 0.0
+
+    def flush_sec():
+        nonlocal sec_dirty, sec_last_flush
+        if not sec_dirty or time.time() - sec_last_flush < 15:
+            return
+        try:
+            os.makedirs(os.path.dirname(RESP_KV), exist_ok=True)
+            with open(RESP_KV + ".tmp", "w") as f:
+                for k, v in sec.items():
+                    f.write(f"ng.{k}={v}\n")
+            os.replace(RESP_KV + ".tmp", RESP_KV)
+            sec_dirty = False
+            sec_last_flush = time.time()
+        except OSError:
+            pass
 
     log(f"responder: started, ENFORCE={'yes' if enforce else 'no'}, "
         f"{len(optin)} opt-in / {len(ignore)} ignored / {len(udp_ok)} udp-ok SIDs")
@@ -306,7 +329,12 @@ def main():
                 malformed += 1
                 continue
             if not isinstance(ev, dict) or ev.get("event_type") != "alert":
+                flush_sec()
                 continue
+            sec["resp_alerts_seen"] += 1
+            sec["resp_last_alert_ts"] = int(now)
+            sec_dirty = True
+            flush_sec()
             alert = ev.get("alert") or {}
             flow = ev.get("flow") or {}
             if not isinstance(alert, dict):
@@ -397,6 +425,9 @@ def main():
 
             if not enforce:
                 journal.offense(src, sid, ttl, shadow=True)
+                sec["resp_dryrun_would_block"] += 1
+                sec["resp_last_action_ts"] = int(now)
+                sec_dirty = True
                 log(f"WOULD BLOCK: {tag} ttl={ttl} offense={offense_no}")
                 continue
 
@@ -404,6 +435,9 @@ def main():
                                capture_output=True, text=True)
             if r.returncode == 0:
                 journal.offense(src, sid, ttl, shadow=False)
+                sec["resp_blocks_issued"] += 1
+                sec["resp_last_action_ts"] = int(now)
+                sec_dirty = True
                 log(f"BLOCKED: {tag} ttl={ttl} offense={offense_no}")
             else:
                 log(f"block FAILED ({r.stderr.strip()}): {tag}")

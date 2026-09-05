@@ -1,9 +1,23 @@
 #!/bin/bash
 # nodeguard-status: the 2am command. Human output by default; --kv emits
-# key=value pairs for zabbix UserParameters.
+# key=value pairs consumed by the monitoring chain (watchdog exports it
+# to /run/zabbix/nodeguard.kv every minute).
+#
+# INVARIANT: the --kv path is O(1) in blocklist population. Trie walks
+# live in the 10-minute sweep, which is the SOLE writer of the mapstat
+# cache this reads (ADR 0007). The live map walk below runs only in the
+# operator-invoked human branch.
+#
+# SAFETY: a value that cannot be read is OMITTED (its Zabbix item goes
+# unsupported, one visible signal) plus an explicit fail flag where the
+# failure is a local tool breaking; nothing here coerces a failure to 0.
 set -uo pipefail
 . /usr/local/lib/nodeguard/nodeguard-lib.sh
 ng_env
+
+MAPSTAT=/var/lib/nodeguard/mapstat.kv
+RESP_KV=/run/nodeguard/responder.kv
+FEEDS_KV=/var/lib/nodeguard/feeds/feeds.kv
 
 kv=0
 [ "${1:-}" = "--kv" ] && kv=1
@@ -22,13 +36,20 @@ else
     attached=0
 fi
 
+attach_mode=none
+if [ "$attached" -eq 1 ]; then
+    attach_mode=$(xdp-loader status "$IFACE" 2>/dev/null \
+        | awk '$2 == "xdp_dispatcher" { print $3; exit }')
+    [ -n "$attach_mode" ] || attach_mode=unknown
+fi
+
 ks="unpinned"
 port_cfg=""
-blocks=""
+rearm=""
 if [ -e "$NG_PIN/config" ]; then
     ks=$(ng_cfg_get 1 2>/dev/null || echo "error")
     port_cfg=$(ng_cfg_get 0 2>/dev/null || echo "error")
-    blocks=$(python3 "$NG_MAP" list --json 2>/dev/null | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))' || echo "error")
+    rearm=$(ng_cfg_get 2 2>/dev/null || echo "")
 fi
 port_live=$(ng_live_wg_port)
 port_match=0
@@ -45,42 +66,83 @@ maps_active=$(systemctl is-active nodeguard-maps 2>/dev/null || true)
 wd_timer=$(systemctl is-active nodeguard-watchdog.timer 2>/dev/null || true)
 sw_timer=$(systemctl is-active nodeguard-sweep.timer 2>/dev/null || true)
 
-kdrops=""
+# One suricatasc call serves kernel_drops AND alert count. On timeout,
+# socket error, or parse failure BOTH keys are omitted: a wedged capture
+# must never read as zero drops.
+sur_counters=""
 if [ "$sur_active" = "active" ]; then
-    kdrops=$(suricatasc -c dump-counters 2>/dev/null | python3 -c '
+    sur_counters=$(timeout 5 suricatasc -c dump-counters 2>/dev/null | python3 -c '
 import json, sys
 try:
     d = json.load(sys.stdin)["message"]
-    # Counters are aggregated at message.capture, not per thread.
-    print(d.get("capture", {}).get("kernel_drops", 0))
+    drops = d.get("capture", {}).get("kernel_drops")
+    alerts = d.get("detect", {}).get("alert")
+    if drops is None or alerts is None:
+        raise ValueError
+    print(f"{drops} {alerts}")
 except Exception:
-    print("")
+    pass
 ' || true)
 fi
 
 if [ "$kv" -eq 1 ]; then
     echo "ng.ts=$(date +%s)"
     echo "ng.attached=$attached"
-    if [ -e "$NG_PIN/stats" ]; then
-        python3 "$NG_MAP" stats --json 2>/dev/null | python3 -c '
-import json, sys
-try:
-    d = json.load(sys.stdin)
-except Exception:
-    d = {}
-for k in ("pass", "drop_v4", "drop_v6", "pass_allowlist", "pass_wgport"):
-    print(f"ng.{k}={d.get(k, 0)}")
-'
-    fi
     case "$attached" in
     0) echo "ng.attach_state=detached" ;;
     1) echo "ng.attach_state=attached" ;;
     *) echo "ng.attach_state=unknown" ;;
     esac
+    echo "ng.attach_mode=$attach_mode"
+    # prog_match: emitted only when an expectation exists; attached with
+    # no expectation file (tmpfs cleared, pre-tooling attach) is a
+    # visible-unsupported state, never a silent 1 or false-paging 0.
+    if [ -f "$NG_RUN/expected_prog_id" ]; then
+        expected=$(cat "$NG_RUN/expected_prog_id")
+        if [ -n "$prog_id" ] && [ "$prog_id" = "$expected" ]; then
+            echo "ng.prog_match=1"
+        else
+            echo "ng.prog_match=0"
+        fi
+    fi
+    # stats: all 8 slots, or NO counter lines plus the fail flag.
+    if [ -e "$NG_PIN/stats" ]; then
+        stats_json=$(python3 "$NG_MAP" stats --json 2>/dev/null)
+        if [ -n "$stats_json" ] && printf '%s' "$stats_json" | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+names = ("pass", "drop_v4", "drop_v6", "pass_expired", "pass_allowlist",
+         "pass_wgport", "pass_nonip", "pass_parsefail")
+if set(names) - set(d):
+    sys.exit(1)
+for n in names:
+    print(f"ng.{n}={d[n]}")
+'; then
+            echo "ng.stats_read_fail=0"
+        else
+            echo "ng.stats_read_fail=1"
+        fi
+    fi
+    # stats2: pin absent during rollout = emit nothing (honest state).
+    if [ -e "$NG_PIN/stats2" ]; then
+        s2_json=$(python3 "$NG_MAP" stats2 --json 2>/dev/null)
+        if [ -n "$s2_json" ] && printf '%s' "$s2_json" | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+if not d:
+    sys.exit(1)
+for k, v in d.items():
+    print(f"ng.{k}={v}")
+'; then
+            echo "ng.stats2_read_fail=0"
+        else
+            echo "ng.stats2_read_fail=1"
+        fi
+    fi
     echo "ng.prog_id=${prog_id:-0}"
     echo "ng.killswitch=${ks}"
     echo "ng.latch=$latch"
-    echo "ng.blocks=${blocks:-0}"
+    [ -n "$rearm" ] && echo "ng.rearm_count=$rearm"
     echo "ng.port_cfg=${port_cfg:-0}"
     echo "ng.port_live=${port_live:-0}"
     echo "ng.port_match=$port_match"
@@ -90,24 +152,55 @@ for k in ("pass", "drop_v4", "drop_v6", "pass_allowlist", "pass_wgport"):
     echo "ng.maps_unit=$maps_active"
     echo "ng.watchdog_timer=$wd_timer"
     echo "ng.sweep_timer=$sw_timer"
-    echo "ng.kernel_drops=${kdrops:-0}"
+    if [ -n "$sur_counters" ]; then
+        echo "ng.kernel_drops=${sur_counters%% *}"
+        echo "ng.suricata_alerts=${sur_counters##* }"
+    fi
+    # watchdog internals: distance-to-trip before a soft-off. One-cycle
+    # lag by design (kv written at cycle start).
+    for wdk in canary_fail lifeline_fail toolfail clean; do
+        echo "ng.wd_$wdk=$(cat "$NG_RUN/wd_$wdk" 2>/dev/null || echo 0)"
+    done
+    # anomaly detector state (watchdog-maintained)
+    if [ -f /var/lib/nodeguard/wd_anomaly.kv ]; then
+        cat /var/lib/nodeguard/wd_anomaly.kv
+    fi
+    # map stats come EXCLUSIVELY from the sweep cache here; a missing or
+    # empty cache omits every key (visible unknown after reboot until
+    # the first sweep).
+    if [ -s "$MAPSTAT" ]; then
+        cat "$MAPSTAT"
+        sweep_ts=$(awk -F= '$1 == "ng.sweep_ts" { print $2 }' "$MAPSTAT")
+        [ -n "$sweep_ts" ] && echo "ng.sweep_age=$(( $(date +%s) - sweep_ts ))"
+    fi
+    if [ -f "$RESP_KV" ]; then
+        cat "$RESP_KV"
+    fi
     # Feed loader state, persisted across reboot so staleness triggers
     # stay honest (a tmpfs fragment would false-alarm on every boot).
-    if [ -f /var/lib/nodeguard/feeds/feeds.kv ]; then
-        cat /var/lib/nodeguard/feeds/feeds.kv
+    if [ -f "$FEEDS_KV" ]; then
+        cat "$FEEDS_KV"
     else
         # Pre-first-run defaults so the global items are supported from
         # day one; per-feed items appear after the first run.
-        for kvk in enforce approved config_approved_mismatch journal_reset                    churn_held last_run_ts entries candidates rejected                    failed map_errors; do
+        for kvk in enforce approved config_approved_mismatch journal_reset \
+                   churn_held last_run_ts entries candidates rejected \
+                   failed map_errors; do
             echo "ng.feeds_$kvk=0"
         done
     fi
     exit 0
 fi
 
+# ---------------------------------------------------------- human branch
+blocks=""
+if [ -e "$NG_PIN/config" ]; then
+    blocks=$(python3 "$NG_MAP" list --json 2>/dev/null | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))' || echo "error")
+fi
+
 echo "== nodeguard status: $(hostname) ($IFACE) =="
 case "$attached" in
-1) echo "XDP:        ATTACHED (prog id $prog_id, native, dispatcher)" ;;
+1) echo "XDP:        ATTACHED (prog id $prog_id, $attach_mode, dispatcher)" ;;
 0) echo "XDP:        NOT ATTACHED (datapath pristine)" ;;
 *) echo "XDP:        attach state UNKNOWN (xdp-loader status failed); program may still be enforcing" ;;
 esac
@@ -117,14 +210,22 @@ unpinned) echo "Enforce:    maps not pinned (nodeguard-maps not run)" ;;
 *) echo "Enforce:    OFF (kill switch=$ks, latched by: $latch)" ;;
 esac
 echo "WG port:    config=$port_cfg live=$port_live match=$port_match"
-echo "Blocks:     ${blocks:-n/a} active entries"
+echo "Blocks:     ${blocks:-n/a} active entries (live count)"
 if [ -e "$NG_PIN/stats" ]; then
     echo "Counters:"
     python3 "$NG_MAP" stats | sed 's/^/  /'
 fi
+if [ -e "$NG_PIN/stats2" ]; then
+    echo "Sanity counters:"
+    python3 "$NG_MAP" stats2 | sed 's/^/  /'
+fi
 echo "Units:      suricata=$sur_active responder=$resp_active xdp=$xdp_active maps=$maps_active"
 echo "Timers:     watchdog=$wd_timer sweep=$sw_timer"
-[ -n "$kdrops" ] && echo "Suricata:   kernel_drops=$kdrops"
+[ -n "$sur_counters" ] && echo "Suricata:   kernel_drops=${sur_counters%% *} alerts=${sur_counters##* }"
+if [ -s "$MAPSTAT" ]; then
+    echo "-- sweep cache --"
+    sed 's/^ng\./  /' "$MAPSTAT"
+fi
 if [ "$attached" -eq 1 ]; then
     echo "-- dispatcher --"
     xdp-loader status "$IFACE" | sed 's/^/  /'

@@ -14,6 +14,7 @@
 #include <linux/ip.h>
 #include <linux/ipv6.h>
 #include <linux/udp.h>
+#include <linux/tcp.h>
 #include <linux/in.h>
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_endian.h>
@@ -25,6 +26,13 @@ char LICENSE[] SEC("license") = "GPL";
 
 // 13-bit IPv4 fragment offset (UAPI linux/ip.h does not define IP_OFFSET).
 #define NG_IPV4_FRAG_OFFSET_MASK bpf_htons(0x1FFF)
+// Offset bits plus MF: nonzero means the packet participates in
+// fragmentation at all (first fragments included).
+#define NG_IPV4_FRAG_ANY_MASK bpf_htons(0x3FFF)
+// SAFETY: telemetry threshold only, never a verdict input. No shipped IDS
+// publishes a numeric low-TTL floor (nearest precedent is p0f's 64/128/255
+// initial-TTL buckets); 5 is a deliberate tunable revisited from soak data.
+#define NG_TTL_LOW_FLOOR 5
 
 struct lpm_v4_key {
 	__u32 prefixlen;
@@ -48,6 +56,21 @@ enum {
 	CFG_REARM_COUNT,   // watchdog auto re-arms this boot
 	CFG_RESERVED,
 	CFG_MAX,
+};
+
+// stats2 slots (count-only protocol-sanity telemetry; ADR 0007)
+enum {
+	ST2_TCP_SYNFIN = 0,
+	ST2_TCP_SYNRST,
+	ST2_TCP_NULL,
+	ST2_TCP_XMAS,
+	ST2_TTL_LOW,
+	ST2_FRAG_V4,
+	ST2_FRAG_V6,
+	// INVARIANT: slots above are append-only; reserved headroom below
+	// lets the next counters ship as a program-only change with no map
+	// parameter drift (ADR 0004).
+	ST2_MAX = 16,
 };
 
 // stats slots
@@ -115,11 +138,45 @@ struct {
 	__uint(pinning, LIBBPF_PIN_BY_NAME);
 } stats SEC(".maps");
 
+struct {
+	__uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
+	__type(key, __u32);
+	__type(value, __u64);
+	__uint(max_entries, ST2_MAX);
+	__uint(pinning, LIBBPF_PIN_BY_NAME);
+} stats2 SEC(".maps");
+
 static __always_inline void count(__u32 idx)
 {
 	__u64 *v = bpf_map_lookup_elem(&stats, &idx);
 	if (v)
 		(*v)++;
+}
+
+static __always_inline void count2(__u32 idx)
+{
+	__u64 *v = bpf_map_lookup_elem(&stats2, &idx);
+	if (v)
+		(*v)++;
+}
+
+// SAFETY: count-only. At most one flag-combination counter per packet;
+// a bounds failure on the TCP header is not a parse failure of the
+// packet (the IP header was fine) and simply skips the flag counters.
+static __always_inline void sanity_tcp_flags(struct tcphdr *tcp,
+					     void *data_end)
+{
+	if ((void *)(tcp + 1) > data_end)
+		return;
+	if (tcp->syn && tcp->fin)
+		count2(ST2_TCP_SYNFIN);
+	else if (tcp->syn && tcp->rst)
+		count2(ST2_TCP_SYNRST);
+	else if (!tcp->fin && !tcp->syn && !tcp->rst && !tcp->psh &&
+		 !tcp->ack && !tcp->urg)
+		count2(ST2_TCP_NULL);
+	else if (tcp->fin && tcp->psh && tcp->urg)
+		count2(ST2_TCP_XMAS);
 }
 
 struct vlan_hdr {
@@ -130,7 +187,8 @@ struct vlan_hdr {
 // The attach points carry untagged traffic today; one 802.1Q header is
 // parsed and skipped so a tagged frame is judged on its real payload
 // rather than passing as non-IP.
-static __always_inline int handle_v4(void *nh, void *data_end, __u64 wg_port)
+static __always_inline int handle_v4(void *nh, void *data_end, __u64 wg_port,
+				     __u64 kill_switch)
 {
 	struct iphdr *ip = nh;
 	struct lpm_v4_key key = { .prefixlen = 32 };
@@ -138,6 +196,26 @@ static __always_inline int handle_v4(void *nh, void *data_end, __u64 wg_port)
 
 	if ((void *)(ip + 1) > data_end) {
 		count(ST_PASS_PARSEFAIL);
+		return XDP_PASS;
+	}
+
+	// SAFETY: protocol-sanity telemetry runs BEFORE the kill switch so
+	// scan visibility survives a latch (the window an operator most
+	// needs it). Count-only by contract (ADR 0007).
+	if (ip->frag_off & NG_IPV4_FRAG_ANY_MASK)
+		count2(ST2_FRAG_V4);
+	if (ip->ttl < NG_TTL_LOW_FLOOR)
+		count2(ST2_TTL_LOW);
+	if (ip->protocol == IPPROTO_TCP &&
+	    (ip->frag_off & NG_IPV4_FRAG_OFFSET_MASK) == 0) {
+		__u32 ihl = ip->ihl * 4;
+
+		if (ihl >= sizeof(*ip))
+			sanity_tcp_flags(nh + ihl, data_end);
+	}
+
+	if (kill_switch) {
+		count(ST_PASS);
 		return XDP_PASS;
 	}
 
@@ -187,7 +265,8 @@ static __always_inline int handle_v4(void *nh, void *data_end, __u64 wg_port)
 	return XDP_DROP;
 }
 
-static __always_inline int handle_v6(void *nh, void *data_end, __u64 wg_port)
+static __always_inline int handle_v6(void *nh, void *data_end, __u64 wg_port,
+				     __u64 kill_switch)
 {
 	struct ipv6hdr *ip6 = nh;
 	struct lpm_v6_key key = { .prefixlen = 128 };
@@ -195,6 +274,21 @@ static __always_inline int handle_v6(void *nh, void *data_end, __u64 wg_port)
 
 	if ((void *)(ip6 + 1) > data_end) {
 		count(ST_PASS_PARSEFAIL);
+		return XDP_PASS;
+	}
+
+	// Protocol-sanity telemetry, before the kill switch (see handle_v4).
+	// NOTE: no extension-header walk, matching the WG-port limitation
+	// below; a fragment header is counted, then falls through.
+	if (ip6->nexthdr == 44)
+		count2(ST2_FRAG_V6);
+	if (ip6->hop_limit < NG_TTL_LOW_FLOOR)
+		count2(ST2_TTL_LOW);
+	if (ip6->nexthdr == IPPROTO_TCP)
+		sanity_tcp_flags((void *)(ip6 + 1), data_end);
+
+	if (kill_switch) {
+		count(ST_PASS);
 		return XDP_PASS;
 	}
 
@@ -272,12 +366,15 @@ int nodeguard(struct xdp_md *ctx)
 		return XDP_PASS;
 	}
 
+	// The kill switch is read here but ENFORCED inside the handlers,
+	// after the sanity counters, so telemetry keeps advancing during a
+	// latch (ADR 0007).
+	__u64 kill_switch = 0;
+
 	cfg_key = CFG_KILL_SWITCH;
 	val = bpf_map_lookup_elem(&config, &cfg_key);
-	if (val && *val) {
-		count(ST_PASS);
-		return XDP_PASS;
-	}
+	if (val)
+		kill_switch = *val;
 
 	cfg_key = CFG_WG_PORT;
 	val = bpf_map_lookup_elem(&config, &cfg_key);
@@ -285,6 +382,6 @@ int nodeguard(struct xdp_md *ctx)
 		wg_port = *val;
 
 	if (proto == bpf_htons(ETH_P_IP))
-		return handle_v4(nh, data_end, wg_port);
-	return handle_v6(nh, data_end, wg_port);
+		return handle_v4(nh, data_end, wg_port, kill_switch);
+	return handle_v6(nh, data_end, wg_port, kill_switch);
 }

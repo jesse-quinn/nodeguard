@@ -58,27 +58,68 @@ ng_live_wg_port() {
     printf '%s\n' "$ports" | head -1
 }
 
-# Verify that the program with id $1 uses exactly the pinned nodeguard
-# maps. Returns 0 only when every pinned map id appears in its map_ids.
+# INVARIANT (ADR 0007): identity is generalized so additive maps roll
+# out hitlessly in BOTH directions: every map the program references
+# that has a pin of the same name under $NG_PIN must carry that pin's
+# id, and the core six must all be present in the program's set. An
+# unreferenced extra pin (rollback to an older object) is ignored.
 ng_verify_map_identity() {
-    local prog_id="$1" prog_maps pinned_id ok=1 m
-    prog_maps=$(bpftool prog show id "$prog_id" -j 2>/dev/null | python3 -c \
-        'import json,sys; print(" ".join(str(i) for i in json.load(sys.stdin).get("map_ids", [])))' 2>/dev/null)
-    for m in allow4 allow6 block4 block6 config stats; do
-        pinned_id=$(bpftool map show pinned "$NG_PIN/$m" -j 2>/dev/null | python3 -c \
-            'import json,sys; print(json.load(sys.stdin)["id"])' 2>/dev/null)
-        if [ -z "$pinned_id" ]; then
-            ng_log "map identity: $m has no pin under $NG_PIN" crit
+    local prog_id="$1"
+    python3 - "$NG_PIN" "$prog_id" <<'IDPY'
+import json, subprocess, sys
+pin_root, prog_id = sys.argv[1], sys.argv[2]
+r = subprocess.run(["bpftool", "prog", "show", "id", prog_id, "-j"],
+                   capture_output=True, text=True)
+if r.returncode != 0:
+    sys.exit(1)
+prog = json.loads(r.stdout)
+ids = prog.get("map_ids", [])
+core = {"allow4", "allow6", "block4", "block6", "config", "stats"}
+names = {}
+for i in ids:
+    r = subprocess.run(["bpftool", "map", "show", "id", str(i), "-j"],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        sys.exit(1)
+    m = json.loads(r.stdout)
+    names[m.get("name")] = i
+missing = core - set(names)
+if missing:
+    print(f"map identity: core maps missing from program: {sorted(missing)}",
+          file=sys.stderr)
+    sys.exit(1)
+import os
+ok = True
+for name, prog_map_id in names.items():
+    pin = os.path.join(pin_root, name or "")
+    if not name or not os.path.exists(pin):
+        continue
+    r = subprocess.run(["bpftool", "map", "show", "pinned", pin, "-j"],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        ok = False
+        continue
+    if json.loads(r.stdout).get("id") != prog_map_id:
+        print(f"map identity: prog map {name} id {prog_map_id} != pinned",
+              file=sys.stderr)
+        ok = False
+sys.exit(0 if ok else 1)
+IDPY
+}
+
+# SAFETY (ADR 0007): refuse to load when the installed spec lists a map
+# with no pin: precisely "create-maps has not run for this object
+# version". Prevents libbpf silently auto-pinning outside the spec
+# contract. Recovery is named because 2am.
+ng_spec_pins_present() {
+    local name rest ok=1
+    [ -f "$NG_SPEC" ] || { ng_log "spec $NG_SPEC missing" crit; return 1; }
+    while read -r name rest; do
+        case "$name" in ''|'#'*) continue ;; esac
+        if [ ! -e "$NG_PIN/$name" ]; then
+            ng_log "spec lists map '$name' but no pin exists; run: systemctl reload nodeguard-maps" crit
             ok=0
-            continue
         fi
-        case " $prog_maps " in
-        *" $pinned_id "*) ;;
-        *)
-            ng_log "map identity: prog $prog_id does not use pinned $m (id $pinned_id)" crit
-            ok=0
-            ;;
-        esac
-    done
+    done < "$NG_SPEC"
     [ "$ok" -eq 1 ]
 }

@@ -9,7 +9,14 @@ mkdir -p "$NG_RUN"
 
 # 1. Create missing maps / verify existing ones against the build-generated
 #    spec. A mismatch fails here, loudly, with recovery instructions.
-python3 "$NG_MAP" create-maps --spec "$NG_SPEC" || exit 2
+create_out=$(python3 "$NG_MAP" create-maps --spec "$NG_SPEC") || exit 2
+printf '%s\n' "$create_out"
+# SAFETY: created maps mean the old sweep cache describes maps that no
+# longer exist (reboot); truncate so counts read visible-unknown until
+# the first sweep, never confident pre-reboot totals.
+if printf '%s' "$create_out" | grep -q "^CREATED"; then
+    rm -f /var/lib/nodeguard/mapstat.kv /var/lib/nodeguard/sweep_hits.json
+fi
 
 # 2. Build the generated protected-remotes file from protected.conf.
 GEN="$NG_RUN/allow-generated.txt"

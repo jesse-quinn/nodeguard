@@ -10,8 +10,10 @@
 # Bring-up is deliberately manual and phased; see docs/design.md.
 set -euo pipefail
 
-SSH="${1:?usage: deploy.sh <ssh-target> <host-config-dir>}"
-HOSTDIR="${2:?usage: deploy.sh <ssh-target> <host-config-dir>}"
+SSH="${1:?usage: deploy.sh <ssh-target> <host-config-dir> [--with-kernel]}"
+HOSTDIR="${2:?usage: deploy.sh <ssh-target> <host-config-dir> [--with-kernel]}"
+WITH_KERNEL=0
+[ "${3:-}" = "--with-kernel" ] && WITH_KERNEL=1
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="$REPO/build/out"
 
@@ -21,14 +23,24 @@ for f in nodeguard.env allow4.txt allow6.txt responder.conf feeds.conf \
          nodeguard-xdp-10-device.conf suricata.yaml; do
     [ -f "$HOSTDIR/$f" ] || { echo "missing $HOSTDIR/$f (suricata.yaml comes from build.sh)"; exit 2; }
 done
-[ -f "$OUT/nodeguard_kern.o" ] || { echo "run build/build.sh first"; exit 2; }
-[ -f "$OUT/nodeguard-maps.spec" ] || { echo "spec missing; run build/build.sh"; exit 2; }
+# SAFETY (ADR 0007): the datapath object never ships as a stowaway of a
+# userspace deploy; a restart during a multi-day phase must reload the
+# OLD object. Kernel artifacts move only with --with-kernel.
+if [ "$WITH_KERNEL" -eq 1 ]; then
+    [ -f "$OUT/nodeguard_kern.o" ] || { echo "run build/build.sh first"; exit 2; }
+    [ -f "$OUT/nodeguard-maps.spec" ] || { echo "spec missing; run build/build.sh"; exit 2; }
+fi
 
 STAGE=/tmp/nodeguard-deploy
 echo "== staging to $SSH:$STAGE =="
 # shellcheck disable=SC2029
 ssh "$SSH" "rm -rf $STAGE && mkdir -p $STAGE"
-scp -q "$OUT/nodeguard_kern.o" "$OUT/nodeguard-maps.spec" \
+KERNEL_FILES=""
+if [ "$WITH_KERNEL" -eq 1 ]; then
+    KERNEL_FILES="$OUT/nodeguard_kern.o $OUT/nodeguard-maps.spec"
+fi
+# shellcheck disable=SC2086
+scp -q $KERNEL_FILES \
     "$REPO"/bin/ngmap.py "$REPO"/bin/nodeguard-lib.sh \
     "$REPO"/bin/nodeguard-maps "$REPO"/bin/nodeguard-attach \
     "$REPO"/bin/nodeguard-detach "$REPO"/bin/nodeguard-cli \
@@ -38,6 +50,7 @@ scp -q "$OUT/nodeguard_kern.o" "$OUT/nodeguard-maps.spec" \
     "$REPO"/units/*.service "$REPO"/units/*.timer \
     "$REPO"/etc/protected.conf "$REPO"/etc/sids.conf \
     "$REPO"/etc/tmpfiles-nodeguard.conf "$REPO"/etc/logrotate-suricata.conf \
+    "$REPO"/etc/zabbix-userparameter-nodeguard.conf \
     "$HOSTDIR"/nodeguard.env "$HOSTDIR"/allow4.txt "$HOSTDIR"/allow6.txt \
     "$HOSTDIR"/responder.conf "$HOSTDIR"/feeds.conf \
     "$HOSTDIR"/sysconfig-suricata \
@@ -55,7 +68,12 @@ S=/tmp/nodeguard-deploy
 [ -d /etc/suricata ] || { echo "ERROR: /etc/suricata missing; install the suricata RPM first (phase 0: dnf install suricata), then re-run deploy.sh" >&2; exit 3; }
 
 install -d -m 0755 /usr/local/lib/nodeguard /etc/nodeguard /var/lib/nodeguard /var/lib/nodeguard/feeds
-install -m 0644 "$S/nodeguard_kern.o" "$S/nodeguard-maps.spec" /usr/local/lib/nodeguard/
+if [ -f "$S/nodeguard_kern.o" ]; then
+    # keep the N-1 object for hitless rollback via nodeguard-reload
+    [ -f /usr/local/lib/nodeguard/nodeguard_kern.o ] && \
+        cp -p /usr/local/lib/nodeguard/nodeguard_kern.o /usr/local/lib/nodeguard/nodeguard_kern.o.prev
+    install -m 0644 "$S/nodeguard_kern.o" "$S/nodeguard-maps.spec" /usr/local/lib/nodeguard/
+fi
 install -m 0755 "$S/ngmap.py" /usr/local/lib/nodeguard/
 install -m 0644 "$S/nodeguard-lib.sh" /usr/local/lib/nodeguard/
 
@@ -81,6 +99,9 @@ install -d /etc/systemd/system/suricata.service.d
 install -m 0644 "$S/suricata-50-limits.conf" \
     /etc/systemd/system/suricata.service.d/50-limits.conf
 install -m 0644 "$S/tmpfiles-nodeguard.conf" /etc/tmpfiles.d/nodeguard.conf
+install -d /etc/zabbix_agentd.d
+install -m 0644 "$S/zabbix-userparameter-nodeguard.conf" /etc/zabbix_agentd.d/nodeguard.conf
+# NOTE: agent restart is a deliberate runbook step, not automated here.
 systemd-tmpfiles --create /etc/tmpfiles.d/nodeguard.conf
 
 install -m 0644 "$S/sysconfig-suricata" /etc/sysconfig/suricata
@@ -119,7 +140,7 @@ done
 grep -q '/var/log/suricata/\*.json' /etc/logrotate.d/suricata || { echo "logrotate config missing eve.json coverage"; verify_fail=1; }
 grep -vE '^[[:space:]]*#' /etc/logrotate.d/suricata | grep -q copytruncate && { echo "logrotate config uses copytruncate (loses lines)"; verify_fail=1; }
 [ "$verify_fail" -eq 0 ] || { echo "deploy verification FAILED"; exit 4; }
-sha256sum /usr/local/lib/nodeguard/nodeguard_kern.o
+[ -f "$S/nodeguard_kern.o" ] && sha256sum /usr/local/lib/nodeguard/nodeguard_kern.o
 rm -rf "$S"
 echo "deploy OK: files installed, nothing enabled or started"
 REMOTE

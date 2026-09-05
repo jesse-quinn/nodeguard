@@ -17,7 +17,7 @@ ids=$(printf '%s\n%s\n' "$ids" "$live" | sort -un | grep -v '^$' || true)
 
 if [ -z "$ids" ]; then
     ng_log "nodeguard not attached on $IFACE; nothing to detach"
-    rm -f "$NG_RUN/prog_id"
+    rm -f "$NG_RUN/prog_id" "$NG_RUN/expected_prog_id"
     exit 0
 fi
 
@@ -33,5 +33,5 @@ for id in $ids; do
         fi
     fi
 done
-[ "$rc" -eq 0 ] && rm -f "$NG_RUN/prog_id"
+[ "$rc" -eq 0 ] && rm -f "$NG_RUN/prog_id" "$NG_RUN/expected_prog_id"
 exit "$rc"

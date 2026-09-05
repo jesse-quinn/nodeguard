@@ -19,6 +19,11 @@ if [ -z "$old_ids" ]; then
     exit 2
 fi
 
+if ! ng_spec_pins_present; then
+    ng_log "reload refused: spec-listed pins missing; old program keeps enforcing" err
+    exit 1
+fi
+
 if ! xdp-loader load -m native -p "$NG_PIN" "$IFACE" "$new_obj"; then
     ng_log "reload: load of $new_obj failed; old program still enforcing" err
     exit 1
@@ -45,25 +50,17 @@ if [ "$extra" -eq 1 ]; then
     exit 1
 fi
 
-prog_maps=$(bpftool prog show id "$new_id" -j | python3 -c \
-    'import json,sys; print(" ".join(str(i) for i in json.load(sys.stdin).get("map_ids", [])))')
-for m in allow4 allow6 block4 block6 config stats; do
-    pinned_id=$(bpftool map show pinned "$NG_PIN/$m" -j | python3 -c \
-        'import json,sys; print(json.load(sys.stdin)["id"])')
-    case " $prog_maps " in
-    *" $pinned_id "*) ;;
-    *)
-        ng_log "reload: new prog $new_id does not use pinned $m; unloading it, old program keeps enforcing" err
-        xdp-loader unload "$IFACE" -i "$new_id"
-        exit 1
-        ;;
-    esac
-done
+if ! ng_verify_map_identity "$new_id"; then
+    ng_log "reload: identity check failed for prog $new_id; unloading it, old program keeps enforcing" err
+    xdp-loader unload "$IFACE" -i "$new_id"
+    exit 1
+fi
 
 for id in $old_ids; do
     xdp-loader unload "$IFACE" -i "$id"
 done
 echo "$new_id" > "$NG_RUN/prog_id"
+echo "$new_id" > "$NG_RUN/expected_prog_id"
 if [ "$new_obj" != "$NG_OBJ" ]; then
     install -m 0644 "$new_obj" "$NG_OBJ"
     restorecon "$NG_OBJ" 2>/dev/null || true

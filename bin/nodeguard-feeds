@@ -826,6 +826,11 @@ def mode_apply(conf, a):
     # baseline (and the hold) in place.
     r.accepted = {a.feed}
     rc = r.run()
+    # Freshness after a successful apply: the sweep is the sole mapstat
+    # writer; trigger one instead of writing the cache ourselves.
+    if a.feed not in r.churn_held and a.feed not in r.failed:
+        os.system("systemctl start --no-block nodeguard-sweep.service "
+                  ">/dev/null 2>&1")
     if a.feed in r.churn_held or a.feed in r.failed:
         log(f"feeds: CONFIRM DID NOT COMPLETE for {a.feed}: "
             f"{'still churn-held' if a.feed in r.churn_held else 'run FAILED'}; "
