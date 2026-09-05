@@ -1,22 +1,22 @@
 ## 0. Phase 0: paperwork (no new code)
 
-- [ ] 0.1 Write proposal.md, specs/telemetry-observability/spec.md, and
+- [x] 0.1 Write proposal.md, specs/telemetry-observability/spec.md, and
       this tasks.md; `openspec validate add-nodeguard-telemetry
       --strict` passes
-- [ ] 0.2 Write docs/adr/0006-load-threat-intel-through-the-journaled-
+- [x] 0.2 Write docs/adr/0006-load-threat-intel-through-the-journaled-
       cas-owner.md (accepted; feeds rationale with evidence: firehol
       level1 rejected for live RFC1918/CGNAT ranges, feodo_c2 deferred
       for TTL mismatch, journal-plus-CAS over dump-and-diff because
       block4/6 already have two other writers); MUST land before
       add-nodeguard-feeds archives
-- [ ] 0.3 Write docs/adr/0007-add-counters-in-a-second-stats-map-and-
+- [x] 0.3 Write docs/adr/0007-add-counters-in-a-second-stats-map-and-
       keep-trie-walks-off-the-minute-path.md (proposed until this
       change is approved; new-map-never-resize, no minute-path trie
       walks with the Cloudflare numbers, identity-check relaxation
       rationale, LIBBPF_PIN_BY_NAME auto-pin reality and the spec-based
       pre-load guard, counting-before-killswitch placement, reload
       double-count artifact, the two-layer anomaly split)
-- [ ] 0.4 Gate (phase 0): strict validation passes and design.md claims
+- [x] 0.4 Gate (phase 0): strict validation passes and design.md claims
       spot-checked against the tree
 
 ## 1. Phase 1: reload/attach generalization and userspace kv expansion
@@ -24,38 +24,38 @@
 Deployed WITHOUT --with-kernel; the running kernel object stays on disk
 and any restart reloads it.
 
-- [ ] 1.1 Replace the hardcoded six-map lists in bin/nodeguard-reload:50
+- [x] 1.1 Replace the hardcoded six-map lists in bin/nodeguard-reload:50
       and bin/nodeguard-lib.sh ng_verify_map_identity
       (nodeguard-lib.sh:67) with the derived set: enumerate the
       incoming program's map_ids via `bpftool prog show -j`, resolve
       names via `bpftool map show -j`, require every referenced name
       matching a pin to carry the pinned id, and assert the core six
       are present; remove any --allow-unused-pins escape hatch
-- [ ] 1.2 Add the pre-load spec guard to nodeguard-reload and
+- [x] 1.2 Add the pre-load spec guard to nodeguard-reload and
       nodeguard-attach: refuse to invoke the loader if any spec-listed
       map has no pin, naming `systemctl reload nodeguard-maps` as the
       recovery command
-- [ ] 1.3 nodeguard-status kv: export all eight stats slots
+- [x] 1.3 nodeguard-status kv: export all eight stats slots
       (pass_expired, pass_nonip, pass_parsefail added); replace the
       silent-zero fallback (nodeguard-status:65-73) with
       omit-plus-ng.stats_read_fail=1; add ng.rearm_count from config
       slot 2
-- [ ] 1.4 ngmap.py: `stats2 --json` subcommand with STATS2_NAMES in
+- [x] 1.4 ngmap.py: `stats2 --json` subcommand with STATS2_NAMES in
       lockstep with the enum; status emits nothing when the pin is
       absent, and omit-plus-ng.stats2_read_fail=1 when present but
       unreadable
-- [ ] 1.5 Move the live `list --json` count computation inside the
+- [x] 1.5 Move the live `list --json` count computation inside the
       human-output branch of nodeguard-status (it currently runs
       unconditionally at nodeguard-status:31); kv sources counts
       exclusively from the cache file
-- [ ] 1.6 ngmap.py cmd_sweep: accumulate counts, per-entry hits, and
+- [x] 1.6 ngmap.py cmd_sweep: accumulate counts, per-entry hits, and
       walk duration in the existing 10-minute walk; write
       /var/lib/nodeguard/mapstat.kv atomically (tmp+rename) with
       ng.blocks, blocks_v4/v6, util_v4/v6_pct (denominators from the
       installed spec, not hardcoded), top1_hits, top_blocked (top-5 by
       hits delta via /var/lib/nodeguard/sweep_hits.json, cumulative as
       secondary), sweep_walk_ms, sweep_ts
-- [ ] 1.7 Reboot correctness: nodeguard-maps truncates mapstat.kv and
+- [x] 1.7 Reboot correctness: nodeguard-maps truncates mapstat.kv and
       sweep_hits.json whenever it creates any map;
       nodeguard-sweep.timer OnBootSec 10min to 2min; nodeguard-status
       emits ng.sweep_age from sweep_ts and omits all mapstat keys when
