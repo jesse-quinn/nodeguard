@@ -70,7 +70,7 @@
 - [ ] 5.1 Enable the responder with `ENFORCE=no` for at least 48 to 72
       hours; review every WOULD BLOCK line including the UDP/ICMP
       ineligible ones; tune `sids.conf`
-- [ ] 5.2 Enroll the operator's stable remote egress addresses in the allow
+- [x] 5.2 Enroll the operator's stable remote egress addresses in the allow
       files (mandatory before enforcement)
 
 ## 6. Phase 4: enforcement
