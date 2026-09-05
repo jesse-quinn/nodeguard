@@ -74,3 +74,29 @@ main branch.
   rejected alternatives.
 - OpenSpec change `add-nodeguard-firewall` (`openspec/`) specifying the XDP
   enforcement, Suricata detection, and alert-to-block response capabilities.
+- Threat-intel feed loader (`bin/nodeguard-feeds`, OpenSpec change
+  `add-nodeguard-feeds`): fetches Spamhaus DROP v4/v6 and DShield top-20,
+  validates each body against that feed's real grammar, and reconciles the
+  survivors into the block maps with a 25 h in-kernel TTL so every failure
+  decays to no enforcement. Ownership is a journal plus compare-and-swap on
+  the written expiry value (the block maps have other writers; a feed that
+  failed a run performs zero withdrawals). Enforcement sits behind a double
+  gate: the feed listed in `FEEDS_APPLY` in the deployed config AND recorded
+  in `approved.json` by an interactive `apply --confirm`; `FEEDS_ENFORCE=no`
+  dry-run with reviewable diffs is the mandatory first mode. Ships with a
+  oneshot service and 6 h timer (`units/nodeguard-feeds.service`/`.timer`),
+  a per-host `feeds.conf` (gates and caps: entry counts, aggregate address
+  coverage, churn brake, staleness), `ng.feeds_*` kv fields persisted across
+  reboot, and Zabbix items and triggers including per-feed staleness and the
+  config/approval-drift tripwire.
+- OpenSpec change `add-nodeguard-telemetry` (proposed): a count-only
+  `stats2` per-CPU map for protocol-sanity counters (TCP flag combinations,
+  low TTL, fragments; every new branch still resolves to `XDP_PASS`), a
+  uniform fail-to-unsupported kv discipline (a value that cannot be read is
+  omitted plus an explicit fail flag, never a silent zero), map-population
+  stats cached from the existing 10-minute sweep so the 1-minute path stays
+  O(1) in blocklist size, two redundant anomaly layers (gateway-local EWMA
+  in the watchdog plus Zabbix seasonal baselines with static ceilings), a
+  generated master/dependent template v2, three fleet-scaling dashboards
+  (Overview, Security, Capacity and Pipeline), and the `zbx/` generator
+  suite that builds the template and dashboards.

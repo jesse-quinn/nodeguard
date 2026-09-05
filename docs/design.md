@@ -1,7 +1,11 @@
 # nodeguard: Design
 
 Status: living document.
-Last updated for the pre-deployment tree (2026-09-04).
+Last updated 2026-09-05, mid bring-up: phase 2 is complete on both hosts
+(XDP attached, functional drop tests passed, the hitless reload verified,
+sweep and watchdog timers enabled, alarm drills fired); the responder
+dry-run soak and enforcement are pending, and the threat-intel feeds
+loader is deployed in dry-run on both hosts.
 Companion docs: [`docs/adr/`](adr/) (decisions), [`openspec/`](../openspec/)
 (behaviour specs), [`CHANGELOG.md`](../CHANGELOG.md) (history),
 [`README.md`](../README.md) (quick start and the 2am commands).
@@ -10,9 +14,10 @@ nodeguard is an eBPF/XDP blocklist firewall fed by a passive Suricata IDS,
 built for small Fedora 44 Linux gateways running stock packages. Suricata
 detects; a ~200-line custom XDP program enforces at the driver, with
 in-kernel TTL expiry and fail-open behaviour on every path. This document
-describes the architecture as it stands before the first production
-deployment: the per-packet decision path, the alert-to-block pipeline, the
-watchdog, the map contract, the phased bring-up, and the failure modes.
+describes the architecture as it stands mid bring-up (phase 2 complete,
+dry-run soak and enforcement pending): the per-packet decision path, the
+alert-to-block pipeline, the watchdog, the feeds loader, the map contract,
+the phased bring-up, and the failure modes.
 The one fact a new reader must know: the only packet nodeguard ever drops
 is one whose source address holds an unexpired blocklist entry; every
 other path, including every error path, is `XDP_PASS`.
@@ -133,7 +138,9 @@ External interfaces:
 | Upstream DNS resolvers (Quad9) | out | Allowlisted; also a watchdog lifeline probe |
 | `api.anthropic.com` | read | Resolved into the protected-remotes allowlist (`etc/protected.conf`) |
 | Canary target (e.g. `1.1.1.1:443`) | out | Deliberately non-allowlisted watchdog probe (ADR 0005) |
-| The monitoring system | out | Consumes `nodeguard-status --kv` and journal CRITICALs |
+| Spamhaus DROP v4 / v6 (`drop_v4.json`, `drop_v6.json`) | out | HTTPS fetch by `nodeguard-feeds` every 6 h (`bin/nodeguard-feeds:59`, `units/nodeguard-feeds.timer`) |
+| DShield block list (`block.txt`) | out | HTTPS fetch by `nodeguard-feeds` every 6 h; dry-run only until promoted (`bin/nodeguard-feeds:65`) |
+| The Zabbix server | in | Polls the agent's `nodeguard.kv[*]` items, backed by the watchdog's per-minute kv export to `/run/zabbix/nodeguard.kv` (section 8); journal CRITICALs are the out-of-band channel |
 | A build host (container) | n/a | Compiles the object, generates the spec, rehearses attach |
 | Operator over SSH | in | `deploy/deploy.sh` pushes files; bring-up is manual |
 
@@ -171,6 +178,9 @@ etc/                    shared config templates
 hosts/example-gateway/  per-host config template (documentation IPs)
 build/                  container build, spec generation, netns rehearsal
 deploy/                 file push and verify; enables nothing
+templates/              Zabbix template JSON for the kv items and triggers
+zbx/                    (planned) dashboard and template generator suite,
+                        proposed in OpenSpec change add-nodeguard-telemetry
 ```
 
 ### `src/nodeguard_kern.c`
@@ -204,6 +214,17 @@ priority 10, chain action `XDP_PASS`; `src/nodeguard_kern.c:223`).
 - `nodeguard-reload`: hitless object swap (new dispatcher member in,
   verify, old member out; `bin/nodeguard-reload:1`).
 - `nodeguard-responder`: the Suricata-to-XDP daemon (section 6.2).
+- `nodeguard-feeds`: the threat-intel feed loader (913 lines): fetches
+  Spamhaus DROP v4/v6 and DShield top-20, validates each body against
+  that feed's real grammar, and reconciles the survivors into
+  `block4`/`block6` with a 25 h in-kernel TTL. Ownership is a journal
+  plus compare-and-swap on the written expiry value, never a map dump
+  (the block maps have other writers); a feed that failed this run
+  performs zero withdrawals (invariant W1, `bin/nodeguard-feeds:9`).
+  Enforcement needs a double gate: the feed listed in `FEEDS_APPLY` in
+  the deployed config AND recorded in `approved.json` by an interactive
+  `apply --confirm` (`bin/nodeguard-feeds:22`). Exports `ng.feeds_*` kv
+  state to `/var/lib/nodeguard/feeds/feeds.kv`.
 - `nodeguard-watchdog`: one probe cycle per minute (section 6.3).
 - `nodeguard-canary`: the remote node's self-recovering first-attach
   script, run detached under a transient systemd unit.
@@ -218,7 +239,9 @@ priority 10, chain action `XDP_PASS`; `src/nodeguard_kern.c:223`).
 `nodeguard-xdp.service` (`Requires`/`After` maps;
 `units/nodeguard-xdp.service:3`), `nodeguard-responder.service`
 (`Restart=on-failure`), `nodeguard-sweep.timer` (10 min),
-`nodeguard-watchdog.timer` (1 min), and the `suricata-update`
+`nodeguard-watchdog.timer` (1 min), `nodeguard-feeds.service` (oneshot)
+with `nodeguard-feeds.timer` (every 6 h, 15 min after boot, randomized
+delay; `units/nodeguard-feeds.timer:8`), and the `suricata-update`
 service/timer pair (daily, with the systemd ignore-failure `-` prefix on
 the reload so a stopped Suricata never fails the update;
 `units/suricata-update.service:8`).
@@ -227,11 +250,13 @@ the reload so a stopped Suricata never fails the update;
 
 Shared: `protected.conf` (directives `derp`, `resolve <name>`,
 `cidr <net>`), `sids.conf` (directives `block`, `ignore`, `udp-ok`),
-tmpfiles for `/run/nodeguard`. Per-host template: `nodeguard.env`
+`zabbix-userparameter-nodeguard.conf` (the agent-side kv items, section
+8), tmpfiles for `/run/nodeguard`. Per-host template: `nodeguard.env`
 (`IFACE`, `CANARY_IP`, `CANARY_PORT`, `LIFELINES`,
 `WAN_DYNAMIC_ALLOW`), `allow4.txt`/`allow6.txt`, `responder.conf`,
-Suricata sysconfig, resource-cap drop-in, device dependency drop-in,
-and `suricata-params.json` for yaml generation.
+`feeds.conf` (the feeds loader's gates and caps, section 8), Suricata
+sysconfig, resource-cap drop-in, device dependency drop-in, and
+`suricata-params.json` for yaml generation.
 
 ### `build/` and `deploy/`
 
@@ -318,6 +343,19 @@ of cessation.
 Every minute (`units/nodeguard-watchdog.timer:6`),
 `bin/nodeguard-watchdog` runs one cycle:
 
+- **kv export, first**: writes the `nodeguard-status --kv` snapshot to
+  `/run/zabbix/nodeguard.kv` (tmp then rename;
+  `bin/nodeguard-watchdog:16`). This is the entry point of the entire
+  monitoring chain (section 8) and runs before the maps-exist guard, so
+  monitoring keeps reporting even on a host where nodeguard is not yet
+  set up.
+- **Anomaly detector (planned)**: OpenSpec change
+  `add-nodeguard-telemetry` adds a per-cycle EWMA baseline over deltas
+  of drop, pass, sanity-counter, and alert totals after the kv export,
+  with regime-change reseeds (kill switch, attach state, feeds enforce)
+  and updates excluded for at-threshold cycles so an attack cannot train
+  the detector into silence. Shipped off/shadow first; it never touches
+  the kill switch or any map.
 - **Port refresh**: compares `config[0]` against the port tailscaled
   actually bound (`ss -ulpn`) and rewrites it on change
   (`bin/nodeguard-watchdog:21`). The tailscale RPM restarts tailscaled
@@ -536,6 +574,29 @@ the tunnel impossible. Suricata attaches no XDP program of its own, so
 the dispatcher's one-member-per-priority model stays open for
 break-glass tools.
 
+### Monitoring chain
+
+One direction, one file handoff: `nodeguard-watchdog` writes the
+`nodeguard-status --kv` snapshot to `/run/zabbix/nodeguard.kv` every
+minute (`bin/nodeguard-watchdog:16`); the Zabbix agent's UserParameter
+reads that file (`etc/zabbix-userparameter-nodeguard.conf:7`); the
+template (`templates/zabbix-nodeguard-template.json`) turns the keys
+into items and triggers, including the `ng.feeds_*` items with their
+per-feed staleness and config-drift triggers; dashboards sit on top
+(three fleet-scaling dashboards are proposed in OpenSpec change
+`add-nodeguard-telemetry`, generated from the planned `zbx/` suite).
+
+The file handoff is forced by SELinux, not taste: `zabbix_agent_t`
+cannot make `bpf()` syscalls, and `sudo` does not change the SELinux
+domain, so the agent can never run `bpftool` or `ngmap.py` itself; the
+watchdog runs the tools and the agent only reads the exported file
+(`bin/nodeguard-watchdog:12`). One agent-side trap is recorded in the
+conf itself: the agent substitutes `$1..$9` with item arguments inside
+the command, so awk field references must be written `$$1`/`$$2`
+(`etc/zabbix-userparameter-nodeguard.conf:5`); a single-dollar awk
+program silently matches nothing. `ng.ts` carries the export epoch so
+staleness of the whole chain is one `fuzzytime` check.
+
 ### Configuration
 
 | File | Variable | Default | Meaning |
@@ -548,6 +609,18 @@ break-glass tools.
 | `responder.conf` | `HOME_NETS` | (required) | Networks whose inbound traffic qualifies alerts |
 | `responder.conf` | `TTL` / `TTL_MAX` | `3600` / `86400` | Base block TTL; doubling cap for repeat offenders |
 | `responder.conf` | `RATE_MIN` / `RATE_HOUR` | `30` / `500` | Responder rate caps |
+| `feeds.conf` | `FEEDS_ENFORCE` | `no` | Master feeds gate; `no` fetches and diffs only, zero map writes (mandatory first-run mode) |
+| `feeds.conf` | `FEEDS_APPLY` / `FEEDS_DRYRUN` | empty / all three feeds | Feeds allowed to enforce (jointly with `approved.json`, the double gate) vs fetched and diffed only |
+| `feeds.conf` | `FEEDS_TTL_S` | `90000` | In-kernel TTL (25 h) written per feed entry; every failure decays to no enforcement |
+| `feeds.conf` | `FEEDS_MAX_V4` / `FEEDS_MAX_V6` | `8192` / `2048` | Per-family entry caps across all surviving feeds |
+| `feeds.conf` | `FEEDS_MAX_BYTES` | `4194304` | Fetched body size cap |
+| `feeds.conf` | `FEEDS_V6_FLOOR` | `19` | Shortest accepted IPv6 prefix; shorter fails the whole feed (`bin/nodeguard-feeds:405`) |
+| `feeds.conf` | `FEEDS_MAX_COVERAGE_V4` | `67108864` | Aggregate v4 address-coverage cap; exceeding it aborts the run |
+| `feeds.conf` | `FEEDS_MAX_COVERAGE_V6_48` | `46137344` | Aggregate v6 coverage cap in /48 equivalents; exceeding it aborts the run |
+| `feeds.conf` | `FEEDS_MAX_CHURN_PCT` | `30` | Composition churn brake; a larger swing is held for operator review |
+| `feeds.conf` | `FEEDS_MAX_STALE_S` | `1209600` | Upstream snapshot staleness cap (14 days); a staler feed fails and its entries decay |
+| `nodeguard.env` | `WD_ANOM_MODE` / `WD_ANOM_K` / `WD_ANOM_FLOOR` / `WD_ANOM_TRIP` / `WD_ANOM_ADAPT` | (proposed) | Anomaly-detector tunables proposed in `add-nodeguard-telemetry`; not yet implemented |
+| build-time | `NG_TTL_LOW_FLOOR` | (proposed) `5` | TTL-outlier counting floor for the stats2 counters proposed in `add-nodeguard-telemetry`; not yet implemented |
 
 `sids.conf` is reloaded live on mtime change
 (`bin/nodeguard-responder:193`); the allow files and `protected.conf`
@@ -627,23 +700,30 @@ One bullet per ADR; the rationale and evidence live in the ADRs under
 
 ## 11. Risks and Technical Debt
 
-Open items to verify live, recorded rather than assumed:
+Open items to verify live, recorded rather than assumed (the phase 2
+verifications closed the native-attach, hitless-reload, and
+EVE-flow-fields risks that stood here; see Amendments):
 
-- Native XDP attach on the exact ixgbe ports is unverified until phase
-  2; there is deliberately no skb fallback, so a failure means running
-  open until a human decides (`bin/nodeguard-attach:18`).
-- The `nodeguard-reload` hitless claim (dispatcher member swap without
-  an ixgbe reset) is verified on the gateway in phase 2 before the
-  word hitless is used anywhere.
 - Suricata sizing on Atom-class CPUs is inference; the memory caps in
   `suricata-50-limits.conf` are provisional until phase 1 measures
   steady and reload-peak RSS (reload builds the new detect engine
   beside the old and peaks near twice steady state).
-- Whether this Suricata build's EVE alert records carry
-  `flow.pkts_toserver`/`pkts_toclient` as the anti-spoofing gate
-  requires is confirmed against real alerts in phase 1.
 - `bpftool` map operations and the attach wrapper under enforcing
   SELinux from systemd units are rehearsed on the gateway first.
+- Sweep walk cost at scale: Cloudflare measured about 573 dump
+  operations per second on a 10k-entry LPM trie, with multi-second CPU
+  lockups freeing large tries, so any per-minute trie walk is a
+  structural risk as the block maps grow toward their 65536-entry
+  ceiling. `add-nodeguard-telemetry` keeps the 1-minute collection path
+  O(1) in blocklist population (counts ride the existing 10-minute
+  sweep) and makes the walk's own duration a metric (`sweep_walk_ms`)
+  so degradation is visible before it hurts.
+- Baseline-trigger maturity: seasonal (`baselinedev`) triggers are
+  meaningless until enough trend history exists, and they explode on
+  near-zero baselines. The telemetry change imports them at Information
+  severity with absolute floors, and promotes them only after 14 days
+  of trend rows reviewed as quiet; an unreviewed training window is
+  never blessed.
 
 Known accepted limitations:
 
@@ -687,6 +767,14 @@ Known accepted limitations:
 
 ## Amendments
 
+- 2026-09-05, phase 2 verified live: native XDP attach succeeded on both
+  hosts (`add-nodeguard-firewall` tasks 4.3 and 4.6); the
+  `nodeguard-reload` member swap was proven to cause no carrier loss
+  before the word hitless was used anywhere (task 4.4); and real alerts
+  confirmed this Suricata build's EVE records carry
+  `flow.pkts_toserver`/`pkts_toclient` as the anti-spoofing gate
+  requires (task 3.3). The three corresponding section 11 risks are
+  closed.
 - 2026-09-04, post adversarial implementation review (28 findings resolved): the IPv4 WireGuard-port pass applies only at fragment offset zero; non-first fragments of a blocked source's WireGuard datagrams are dropped, accepted because WireGuard sets DF and the operator's own paths are covered by the allowlist. The kill switch verifies by read-back and the watchdog escalates to detach if the soft-off write fails. Attach state is three-valued; an xdp-loader failure is treated as "unknown, assume enforcing", never as detached. Allowlist reconciliation is performed with "systemctl reload nodeguard-maps" (ExecReload); a restart of that unit propagates through Requires= and blips the link. The per-host device drop-in uses Wants= plus After= for the NIC device unit. The deploy script owns /etc/logrotate.d/suricata (rename-based rotation; the responder drains and reopens across it) and refuses to run before the suricata RPM is installed. Responder TTL escalation counts block windows, not alert lines, and rate caps count attempts identically in dry-run and enforce modes.
 
 ## Roadmap
@@ -696,15 +784,20 @@ in order; each ships through its own explore, adversarial review, and
 OpenSpec proposal cycle:
 
 1. Threat-intel feed loader (nodeguard-feeds): reputable CIDR feeds into the
-   block maps on a TTL that fails open by expiry. In design review now.
+   block maps on a TTL that fails open by expiry. Implemented and deployed
+   in dry-run on both hosts (OpenSpec change `add-nodeguard-feeds`);
+   activation (the interactive `apply --confirm` promotions) pending.
 2. Volumetric anomaly alerting: the watchdog diffs successive stats-map
    snapshots against a rolling baseline and alerts on spikes. Userspace
    only; no new drop path. Closes the distributed low-rate flood blind spot
-   at the observability layer.
+   at the observability layer. Proposed in OpenSpec change
+   `add-nodeguard-telemetry` (section 6 there: local EWMA plus Zabbix
+   seasonal triggers).
 3. Protocol-sanity counters in the XDP program: count implausible frames
    (impossible TCP flag combinations, TTL outliers) into new stats slots;
    every new branch still resolves to XDP_PASS. Telemetry, never
-   enforcement.
+   enforcement. Proposed in OpenSpec change `add-nodeguard-telemetry`
+   (the `stats2` map).
 
 Deliberately deferred, evidence-gated: per-source rate limiting in the
 datapath. It would be a second, independent drop condition; it is not built

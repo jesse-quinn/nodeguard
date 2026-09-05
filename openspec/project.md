@@ -6,9 +6,12 @@ nodeguard is an eBPF/XDP firewall with Suricata IPS wiring for small Linux
 gateways running Fedora with stock packages. Suricata detects passively; a
 small custom XDP program blocks confirmed attackers at the driver with
 in-kernel TTL expiry. The repository holds the generic artifacts (BPF C
-source, CLIs, daemons, systemd units, container build, example host config);
-real deployments keep per-host details (interfaces, allowlists, HOME_NET,
-real addresses) in a private overlay outside this repository.
+source, CLIs, daemons, systemd units, container build, example host config),
+including the `nodeguard-feeds` threat-intel loader; the `zbx/` Zabbix
+template and dashboard generator suite and the count-only `stats2` kernel
+map are proposed in change `add-nodeguard-telemetry`. Real deployments keep
+per-host details (interfaces, allowlists, HOME_NET, real addresses) in a
+private overlay outside this repository.
 
 ## Tech Stack
 

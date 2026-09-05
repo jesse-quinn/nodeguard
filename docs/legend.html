@@ -8,30 +8,103 @@ body { font-family: system-ui, -apple-system, sans-serif; font-size: 13px;
        line-height: 1.55; margin: 10px 14px; color: #1f2c33; background: #fff; }
 b { color: #0b1f2a; }
 p { margin: 4px 0; }
+h2 { font-size: 14px; margin: 12px 0 4px; color: #0b1f2a; }
 @media (prefers-color-scheme: dark) {
   body { color: #d0d8dd; background: #0e1418; }
-  b { color: #ffffff; }
+  b, h2 { color: #ffffff; }
 }
 </style>
 </head>
 <body>
-<p><b>How to read this dashboard.</b> nodeguard is an XDP firewall in the NIC
+<p><b>How to read these dashboards.</b> nodeguard is an XDP firewall in the NIC
 driver, fed by a passive Suricata IDS. Everything fails open: an empty graph or
-a dead component means traffic flows unfiltered, never an outage.</p>
-<p><b>firewall attached?</b> "attached" = the XDP program is loaded and
-enforcing; "detached" = no enforcement; "unknown" = the tooling cannot verify
-state. <b>kill switch</b>: 0 = enforcing, 1 = soft-off (run nodeguard-on to
-re-arm). <b>active blocks</b>: entries currently in the block maps.
-<b>responder unit</b>: the Suricata-alert-to-block daemon.</p>
-<p><b>XDP drop rate</b>: packets per second dropped in-driver from blocklisted
-sources; nonzero means an active block is being exercised. <b>XDP pass
-rate</b>: internet traffic from globally routed sources surviving to the
-blocklist check; near zero on the remote node is normal, it only sees its own
-return traffic. <b>Active blocks</b>: block-map population over time; entries
-expire in-kernel by TTL. <b>Suricata kernel drops</b>: capture ring overflow,
-cumulative; a climbing line means reduced detection coverage, not a traffic
-problem. <b>Allowlist / WireGuard pass rates</b>: traffic taking the
-never-blockable paths (private ranges, operator addresses, and the tailscale
-tunnel port).</p>
+a dead component means traffic flows unfiltered, never an outage. Every metric
+fails toward visible-unknown: a value that cannot be read shows as unsupported
+or no data, never as a reassuring zero. Each dashboard answers one 2am
+question, with every host on every panel.</p>
+
+<h2 id="overview">Overview: is the firewall attached, enforcing, and healthy right now?</h2>
+<p><b>attach state</b>: normal is "attached"; "detached" means no enforcement,
+and "unknown" means the tooling could not verify (assume still enforcing).</p>
+<p><b>kill switch</b>: normal is 0 (enforcing); 1 is soft-off, with the latch
+tile naming who set it (run nodeguard-on to re-arm).</p>
+<p><b>prog match</b>: normal is 1; 0 means the live program is not the one the
+tooling installed, which should never persist past a reload.</p>
+<p><b>active blocks</b>: entries currently in the block maps; normal is a
+slowly moving population that decays by TTL when the writers stop.</p>
+<p><b>responder unit</b>: the Suricata-alert-to-block daemon; normal is
+active.</p>
+<p><b>anomaly count</b>: cumulative volumetric-anomaly trips; normal is a flat
+line, and any increase deserves a look at the journal CRITICAL it left.</p>
+<p><b>XDP drop rate (v4 and v6)</b>: packets per second dropped in-driver from
+blocklisted sources; nonzero means an active block is being exercised, and
+near-zero is normal between events.</p>
+<p><b>XDP pass rate</b>: internet traffic from globally routed sources
+surviving to the blocklist check; near zero on a NAT'd node is normal, it only
+sees its own return traffic.</p>
+<p><b>Active blocks over time</b>: block-map population; steps up on responder
+or feed activity and drifts down as entries expire in-kernel.</p>
+<p><b>Suricata kernel drops (rate)</b>: capture ring overflow per second;
+normal is zero, and a sustained nonzero rate means reduced detection coverage,
+not a traffic problem.</p>
+<p><b>Allowlist / WireGuard pass rates</b>: traffic taking the never-blockable
+paths (private ranges, operator addresses, the tunnel port); normal is steady
+background matching your own use of the host.</p>
+<p><b>Pass-path share (pie, per host)</b>: where passed packets exit the
+program (pass, allowlist, wgport, expired, nonip, parsefail); normal is
+dominated by plain pass, with expired and parsefail slivers.</p>
+
+<h2 id="security">Security: are we being scanned or attacked, and is the pipeline responding?</h2>
+<p><b>TCP sanity rates (stacked: SYN+FIN, SYN+RST, NULL, XMAS)</b>: impossible
+flag combinations counted on every packet that passes IP header validation;
+normal is zero to a trickle, and a step up means someone is scanning.</p>
+<p><b>TTL-low and fragment counters</b>: frames with implausibly low TTL or
+hop limit, plus v4 and v6 fragments; normal is a low background hum, and these
+count telemetry only, never a drop.</p>
+<p><b>Alert-to-block correlation</b>: suricata alert rate, responder would-block
+and blocks-issued, and XDP drop rate on one time axis; normal is the curves
+moving together, and divergence (alerts without blocks outside dry-run, or
+drops without alerts) is the story worth reading.</p>
+<p><b>top blocked</b>: the sources hitting the blocklist hardest since the
+last sweep walk (cumulative totals carried as a secondary figure); normal is a
+changing cast of strangers, and a familiar address here is a
+misconfiguration.</p>
+<p><b>top1 hits</b>: the single busiest blocked source's hit count; normal is
+modest, and a runaway number means one host is hammering you.</p>
+<p><b>last alert / last action age</b>: time since the responder last saw an
+alert and last acted; normal is minutes to hours, and both growing without
+bound means the detection path is quiet or broken.</p>
+<p><b>watchdog canary failures</b>: consecutive failures of the deliberately
+non-allowlisted probe; normal is 0, and 3 trips the over-block soft-off.</p>
+
+<h2 id="capacity">Capacity and Pipeline: will anything fill up or go stale before morning?</h2>
+<p><b>block-map utilization gauges (v4, v6)</b>: percent of map capacity in
+use per host; normal is well under the 70 warning and 85 alarm thresholds.</p>
+<p><b>per-feed snapshot age (honeycomb)</b>: hours since each threat-intel
+feed last refreshed; normal is green (under 26 h), and red means the feed's
+entries are decaying toward no enforcement.</p>
+<p><b>feeds entries</b>: block-map entries owned by the feeds loader; normal
+is a stable count that steps on upstream publication days.</p>
+<p><b>feeds candidates vs rejected vs failed</b>: what each run fetched,
+dropped at the guards, and failed outright; normal is rejected and failed at
+zero.</p>
+<p><b>sweep walk duration</b>: how long the 10-minute map walk takes; normal
+is low and flat, and a rising trend means the maps are growing toward the
+point where the walk itself needs attention.</p>
+<p><b>feeds enforce</b>: normal is your intended mode; 0 is dry-run (diffs
+only, zero map writes).</p>
+<p><b>feeds churn held</b>: normal is 0; 1 means a feed changed composition
+beyond the churn brake and is waiting for operator review.</p>
+<p><b>feeds journal reset</b>: normal is 0; nonzero means the loader's
+ownership journal was rebuilt and deserves a look.</p>
+<p><b>feeds map errors</b>: normal is 0; nonzero means map writes failed
+mid-reconcile.</p>
+<p><b>re-arm count</b>: normal is 0; 1 means the watchdog used its
+once-per-boot automatic re-arm after a latch.</p>
+<p><b>watchdog lifeline failures</b>: consecutive cycles with every lifeline
+probe down; normal is 0, and 5 trips the outage soft-off.</p>
+<p><b>sweep age</b>: seconds since the sweep last wrote its snapshot; normal
+is under 600, and an alarm at 1800 means the counts on this page are going
+stale.</p>
 </body>
 </html>

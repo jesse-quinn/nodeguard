@@ -68,6 +68,22 @@ and manual, per docs/design.md: 0 prep, 1 Suricata shadow, 2 monitoring
 gate + first attach (scheduled: the first native XDP attach on ixgbe blips
 the link), 3 responder dry-run, 4 enforcement, 5 steady state.
 
+## Monitoring
+
+The watchdog exports a `nodeguard-status --kv` snapshot to
+`/run/zabbix/nodeguard.kv` every minute; the Zabbix agent reads that file
+through the shipped UserParameter (SELinux keeps the agent from calling
+`bpf()` itself), the template in `templates/` turns the keys into items
+and triggers, and three dashboards sit on top: Overview (attached,
+enforcing, healthy right now), Security (scan and attack pressure, and
+whether the pipeline is or would be responding), and Capacity and
+Pipeline (what fills up or goes stale before morning). The dashboards and
+template are generated from `zbx/` (proposed in OpenSpec change
+`add-nodeguard-telemetry`) and address hosts through a Zabbix host group,
+so adding a gateway is: install nodeguard, link the template, add the
+host to the group; no widget rework. `docs/legend.html` explains every
+panel.
+
 ## The 2am commands
 
 ```
