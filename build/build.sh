@@ -125,6 +125,20 @@ for m in $MAPLIST; do
     esac
 done
 # 4. Exercise the encoders end to end against the live maps.
+# 4a. LPM lookup-MISS must read as absent, not error (regression guard:
+# bpftool prints "Not found" rc 254 on an LPM miss, which once got
+# miscounted as a map error and skipped every feed insert).
+python3 - "$PIN" <<'LOOKPY'
+import sys
+sys.path.insert(0, "/work/bin")
+import ngmap
+ngmap.PIN = sys.argv[1]
+net = __import__("ipaddress").ip_network("198.51.100.0/24")
+v = ngmap.lookup_value(ngmap.map_path(net, "block"), ngmap.key_bytes(net))
+if v is not None:
+    sys.exit(f"LOOKUP-MISS REGRESSION: absent LPM key returned {v!r}, not None")
+print("lpm lookup-miss reads as absent: ok")
+LOOKPY
 python3 "$REPO/bin/ngmap.py" block 203.0.113.7 --ttl 60
 python3 "$REPO/bin/ngmap.py" list | grep -q 203.0.113.7
 python3 "$REPO/bin/ngmap.py" set-config 0 41641

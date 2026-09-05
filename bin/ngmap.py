@@ -113,10 +113,15 @@ def lookup_value(path, key):
         e = bpftool("map", "lookup", "pinned", path, "key",
                     *bytes_to_args(key), parse_json=True)
     except RuntimeError as e:
-        if "ENOENT" in str(e) or "No such file or directory" in str(e):
+        # A lookup MISS returns nonzero; bpftool's message for it varies
+        # by version ("Not found", or empty stderr, rc 254). When the map
+        # pin exists, a failed lookup means the key is absent, not an
+        # error; only a genuinely unpinned map is raised.
+        if os.path.exists(path):
             return None
         raise
-    if not e or "value" not in e:
+    # a miss with -j prints JSON null -> None
+    if not e or not isinstance(e, dict) or "value" not in e:
         return None
     return args_to_bytes(e["value"])
 

@@ -696,8 +696,12 @@ class Runner:
             summary[feed] = f"{mode} " + " ".join(
                 f"{k}={v}" for k, v in counts.items())
             if enforce and feed not in self.churn_held:
-                self.feed_meta(feed)["applied_cidrs"] = \
-                    sorted(per_feed[feed].keys())
+                # baseline = what the feed actually owns now (journal),
+                # not the desired set: a run that skipped/errored keys
+                # must not record them as an applied baseline.
+                owned = sorted(k for k, v in self.state["entries"].items()
+                               if v.get("feed") == feed)
+                self.feed_meta(feed)["applied_cidrs"] = owned
 
         self.state["run_in_progress"] = False
         save_json(STATE, self.state)
@@ -837,10 +841,12 @@ def mode_apply(conf, a):
     if a.feed not in r.churn_held and a.feed not in r.failed:
         os.system("systemctl start --no-block nodeguard-sweep.service "
                   ">/dev/null 2>&1")
-    if a.feed in r.churn_held or a.feed in r.failed:
-        log(f"feeds: CONFIRM DID NOT COMPLETE for {a.feed}: "
-            f"{'still churn-held' if a.feed in r.churn_held else 'run FAILED'}; "
-            "approval recorded but the baseline is unchanged")
+    if a.feed in r.churn_held or a.feed in r.failed or r.map_errors:
+        why = ("still churn-held" if a.feed in r.churn_held
+               else "run FAILED" if a.feed in r.failed
+               else f"{r.map_errors} map errors")
+        log(f"feeds: CONFIRM DID NOT COMPLETE for {a.feed}: {why}; "
+            "approval recorded but re-run apply after fixing the cause")
         return 1
     print(open(DIFF).read())
     return rc
