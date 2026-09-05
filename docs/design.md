@@ -40,7 +40,7 @@ Quality goals, in priority order:
 2. **Unspoofable automated enforcement.** A blind spoofed packet must
    never be able to insert a block. Automated blocks require severity-1
    TCP alerts with bidirectional flow evidence
-   (`bin/nodeguard-responder:225`).
+   (`bin/nodeguard-responder:371`).
 3. **Monitoring before enforcement.** No phase of the bring-up attaches
    or enforces anything that cannot already raise an alarm when it
    breaks.
@@ -63,7 +63,7 @@ Quality goals, in priority order:
 - Inline IPS (NFQUEUE, af-packet copy-mode); rejected, see ADR 0001.
 - VLAN-tagged attach points and bonded interfaces (a tagged frame is
   parsed correctly but no per-VLAN policy exists;
-  `src/nodeguard_kern.c:127`).
+  `src/nodeguard_kern.c:187`).
 - Automatic enforcement on UDP or ICMP alerts (log-only by design, ADR
   0002).
 - Any mutation of firewalld, docker, dnsmasq, or tailscale configuration.
@@ -84,7 +84,7 @@ Quality goals, in priority order:
   `ip link` attach anywhere on a nodeguard host would permanently block
   the dispatcher and is forbidden (README, ADR 0004).
 - **GPL-2.0**: the XDP program must be GPL for the BPF helpers it uses
-  (`src/nodeguard_kern.c:22`).
+  (`src/nodeguard_kern.c:23`).
 - **Public repository.** Real per-host configuration (interfaces,
   allowlists, `HOME_NET`) lives in a private overlay outside this tree;
   `hosts/example-gateway/` carries only documentation addresses
@@ -114,8 +114,9 @@ Two deployment targets, both Fedora 44:
               │  WAN NIC (ixgbe)   │
               │ ┌────────────────┐ │   libxdp dispatcher, native mode
               │ │ nodeguard XDP  │◄┼── pinned maps /sys/fs/bpf/nodeguard
-              │ └───────┬────────┘ │   (allow4/6, block4/6, config, stats)
-              └─────────┼──────────┘         ▲
+              │ └───────┬────────┘ │   (allow4/6, block4/6, config,
+              └─────────┼──────────┘    stats, stats2)
+                        │                    ▲
              XDP_PASS   │                    │ ngmap.py (all encoding)
                         ▼                    │
       ┌──────────── netfilter ───────────┐   │
@@ -134,7 +135,7 @@ External interfaces:
 | Neighbour | Direction | Purpose |
 |---|---|---|
 | Suricata (`eve.json`) | in | Alert stream the responder tails |
-| tailscaled | read | Live WireGuard listen port for `config[0]`; DERP relay list for the allowlist (`bin/nodeguard-maps:81`) |
+| tailscaled | read | Live WireGuard listen port for `config[0]`; DERP relay list for the allowlist (`bin/nodeguard-maps:45`) |
 | Upstream DNS resolvers (Quad9) | out | Allowlisted; also a watchdog lifeline probe |
 | `api.anthropic.com` | read | Resolved into the protected-remotes allowlist (`etc/protected.conf`) |
 | Canary target (e.g. `1.1.1.1:443`) | out | Deliberately non-allowlisted watchdog probe (ADR 0005) |
@@ -156,11 +157,11 @@ External interfaces:
   key layout exists in exactly one implementation (`bin/ngmap.py:2`).
 - **The compiled object is the single source of map truth.** The build
   extracts `nodeguard-maps.spec` from the loaded object's BTF
-  (`build/build.sh:26`); the maps service creates or verifies pins only
+  (`build/build.sh:23`); the maps service creates or verifies pins only
   from that spec and refuses drift loudly (ADR 0004).
 - **TTLs are enforced in the kernel** by comparing a stored absolute
   `CLOCK_MONOTONIC` expiry against `bpf_ktime_get_ns()` per packet
-  (`src/nodeguard_kern.c:170`), so no dead userspace component can leave
+  (`src/nodeguard_kern.c:259`), so no dead userspace component can leave
   a block enforced past its expiry (ADR 0003).
 - **Every failure path returns `XDP_PASS`**; the drop is the single
   final case (`src/nodeguard_kern.c:4`).
@@ -178,20 +179,30 @@ etc/                    shared config templates
 hosts/example-gateway/  per-host config template (documentation IPs)
 build/                  container build, spec generation, netns rehearsal
 deploy/                 file push and verify; enables nothing
-templates/              Zabbix template JSON for the kv items and triggers
-zbx/                    (planned) dashboard and template generator suite,
-                        proposed in OpenSpec change add-nodeguard-telemetry
+templates/              committed v1 Zabbix template JSON (kv items, triggers)
+zbx/                    template and dashboard generator suite from OpenSpec
+                        change add-nodeguard-telemetry: gen-template.py
+                        (v2 master/dependent template with uuid carry-over),
+                        check_template.py (build-gate assertions),
+                        dashboards.py + lib.py (the three dashboards via the
+                        API), sample-nodeguard.kv, preview-template-v2.json,
+                        removed-objects.txt (sanctioned template removals)
 ```
 
 ### `src/nodeguard_kern.c`
 
-Declares the six maps with `LIBBPF_PIN_BY_NAME` pinning: `allow4`/
+Declares the seven maps with `LIBBPF_PIN_BY_NAME` pinning: `allow4`/
 `allow6` (LPM tries, u8 tag values), `block4`/`block6` (LPM tries,
 16-byte `{expiry_ns, hits}` values, 65536 and 16384 entries), `config`
 (array of four u64 slots: WireGuard port, kill switch, re-arm count,
-reserved; `src/nodeguard_kern.c:42`), and `stats` (per-CPU array of
-eight counters). Declares libxdp dispatcher metadata (`XDP_RUN_CONFIG`,
-priority 10, chain action `XDP_PASS`; `src/nodeguard_kern.c:223`).
+reserved; `src/nodeguard_kern.c:53`), `stats` (per-CPU array of eight
+counters; enum at `src/nodeguard_kern.c:77`), and `stats2` (per-CPU
+array of 16 slots for the count-only protocol-sanity counters, seven
+used plus append-only headroom so the next counters ship with no map
+parameter drift; enum at `src/nodeguard_kern.c:62`, map at
+`src/nodeguard_kern.c:141`). Declares libxdp dispatcher metadata
+(`XDP_RUN_CONFIG`, priority 10, chain action `XDP_PASS`;
+`src/nodeguard_kern.c:328`).
 
 ### `bin/`
 
@@ -199,10 +210,10 @@ priority 10, chain action `XDP_PASS`; `src/nodeguard_kern.c:223`).
   Subcommands: `block`, `unblock`, `list`, `flush`, `sweep`, `stats`,
   `get-config`/`set-config`, `allow-check`, `create-maps`,
   `reconcile-allow`. Carries the `NEVER_BLOCK` ranges
-  (`bin/ngmap.py:33`) and the guard rails: refuses to block anything
+  (`bin/ngmap.py:49`) and the guard rails: refuses to block anything
   protected or any CIDR containing a protected range
-  (`bin/ngmap.py:161`), refuses short prefixes and permanent entries
-  without `--i-mean-it` (`bin/ngmap.py:155`).
+  (`bin/ngmap.py:227`), refuses short prefixes and permanent entries
+  without `--i-mean-it` (`bin/ngmap.py:219`).
 - `nodeguard-cli`: multiplexed thin wrapper installed as symlinks
   `nodeguard-block`, `-unblock`, `-list`, `-flush`, `-off`, `-on`.
 - `nodeguard-maps`: `ExecStart` of the maps service; creates/verifies
@@ -263,7 +274,7 @@ sysconfig, resource-cap drop-in, device dependency drop-in, and
 `build/build.sh` compiles with clang in a privileged container,
 generates the spec from the loaded object, rehearses the exact
 production pin/create/attach/verify/unload sequence in a netns
-(`build/build.sh:66`), exercises the encoders against live maps, and
+(`build/build.sh:101`), exercises the encoders against live maps, and
 renders per-host `suricata.yaml` files via `build/mkyaml.py` from
 `build/suricata-stock.yaml` (kept for drift comparison against RPM
 updates). `deploy/deploy.sh` pushes the artifact set to one host,
@@ -274,28 +285,39 @@ installs, `bash -n`s every script, `py_compile`s the Python,
 
 ### 6.1 Per-packet XDP decision path
 
-In order, for every frame on the attach NIC
-(`src/nodeguard_kern.c:229`):
+In order, for every frame on the attach NIC (program entry
+`src/nodeguard_kern.c:333`):
 
 1. Ethernet bounds check; one optional 802.1Q/802.1AD header is parsed
-   and skipped. Any parse failure anywhere: `XDP_PASS`, count
-   `pass_parsefail`.
+   and skipped (`src/nodeguard_kern.c:345`). Any parse failure
+   anywhere: `XDP_PASS`, count `pass_parsefail`.
 2. Non-IP ethertype (ARP, LLDP, anything else): `XDP_PASS`,
-   `pass_nonip`.
-3. `config[1]` nonzero (kill switch): `XDP_PASS`
-   (`src/nodeguard_kern.c:264`).
-4. UDP with destination port equal to `config[0]` (the live WireGuard
+   `pass_nonip` (`src/nodeguard_kern.c:364`).
+3. Protocol-sanity counting, in the per-family handler immediately
+   after IP header validation and before any gate, count-only by
+   contract (ADR 0007): fragments (`frag_v4`/`frag_v6`), low TTL or
+   hop limit (`ttl_low`), and, for unfragmented TCP, the impossible
+   flag combinations (`tcp_synfin`, `tcp_synrst`, `tcp_null`,
+   `tcp_xmas`) into `stats2` (v4 `src/nodeguard_kern.c:205`, v6
+   `src/nodeguard_kern.c:283`).
+4. `config[1]` nonzero (kill switch): `XDP_PASS`. Enforced inside each
+   handler, after the sanity counters, so scan visibility survives a
+   latch (v4 `src/nodeguard_kern.c:217`, v6
+   `src/nodeguard_kern.c:290`); the counters keep advancing while
+   enforcement is off (ADR 0007).
+5. UDP with destination port equal to `config[0]` (the live WireGuard
    port): hard `XDP_PASS`, `pass_wgport`. This runs before any blocklist
-   lookup so no block entry can sever the management tunnel
-   (`src/nodeguard_kern.c:141`).
-5. LPM lookup of the source address in `allow4`/`allow6`: hit is
-   `XDP_PASS`, `pass_allowlist`. Allowlist beats blocklist in the
-   datapath itself, so no userspace ordering bug can block a protected
-   range.
-6. LPM lookup in `block4`/`block6`: miss is `XDP_PASS`. On a hit, if
+   lookup so no block entry can sever the management tunnel (v4, at
+   fragment offset zero only, `src/nodeguard_kern.c:229`; v6
+   `src/nodeguard_kern.c:297`).
+6. LPM lookup of the source address in `allow4`/`allow6`: hit is
+   `XDP_PASS`, `pass_allowlist` (`src/nodeguard_kern.c:249`).
+   Allowlist beats blocklist in the datapath itself, so no userspace
+   ordering bug can block a protected range.
+7. LPM lookup in `block4`/`block6`: miss is `XDP_PASS`. On a hit, if
    `expiry_ns != 0` and `bpf_ktime_get_ns() >= expiry_ns`: `XDP_PASS`,
    `pass_expired`. Otherwise increment `hits` and `XDP_DROP`
-   (`src/nodeguard_kern.c:165`).
+   (`src/nodeguard_kern.c:254`).
 
 `expiry_ns == 0` means permanent and is reserved for manual entries; the
 responder never writes it.
@@ -307,7 +329,7 @@ pinned block map -> XDP drop on the offender's next packet.`
 
 The responder (`bin/nodeguard-responder`) tails `eve.json` tail-F
 style, reopening across rotation and starting at the end (never
-replaying; `bin/nodeguard-responder:133`). All gates must pass before
+replaying; `bin/nodeguard-responder:235`). All gates must pass before
 any block:
 
 1. `event_type == "alert"` only.
@@ -315,7 +337,7 @@ any block:
    SIDs on the ignore list are dropped first.
 3. Anti-spoofing gate: protocol must be TCP with
    `flow.pkts_toclient >= 1` and `flow.pkts_toserver >= 2`
-   (`bin/nodeguard-responder:225`). UDP and ICMP alerts are logged as
+   (`bin/nodeguard-responder:371`). UDP and ICMP alerts are logged as
    `WOULD BLOCK (udp/icmp, not eligible)` unless the SID is
    hand-promoted with `udp-ok` plus a written justification (ADR 0002).
 4. Inbound only: destination in `HOME_NETS`, source globally routable.
@@ -323,7 +345,7 @@ any block:
    ranges (userspace re-check via `ngmap.py allow-check`; the kernel
    allow map is the backstop).
 6. Rate caps: 30 new blocks per rolling minute, 500 per hour
-   (`bin/nodeguard-responder:249`); on breach it stops adding and logs
+   (`bin/nodeguard-responder:264`); on breach it stops adding and logs
    loudly.
 7. Action: block the source `/32` or `/128` for TTL 3600 s, doubling
    per repeat offense up to 86400 s (`bin/nodeguard-responder:262`),
@@ -349,16 +371,30 @@ Every minute (`units/nodeguard-watchdog.timer:6`),
   monitoring chain (section 8) and runs before the maps-exist guard, so
   monitoring keeps reporting even on a host where nodeguard is not yet
   set up.
-- **Anomaly detector (planned)**: OpenSpec change
-  `add-nodeguard-telemetry` adds a per-cycle EWMA baseline over deltas
-  of drop, pass, sanity-counter, and alert totals after the kv export,
-  with regime-change reseeds (kill switch, attach state, feeds enforce)
-  and updates excluded for at-threshold cycles so an attack cannot train
-  the detector into silence. Shipped off/shadow first; it never touches
-  the kill switch or any map.
+- **Anomaly detector** (ADR 0007 layer 1, implemented;
+  `bin/nodeguard-watchdog:19`): a per-cycle EWMA baseline over deltas
+  of drop, pass, sanity-counter, and alert totals, computed from the kv
+  snapshot just written. Ships in shadow mode by default
+  (`WD_ANOM_MODE=shadow`; shadow logs and exports
+  `ng.anomaly_shadow_count` while `anomaly_count` stays 0), tunables
+  `WD_ANOM_K=8`, `WD_ANOM_FLOOR=500` per cycle, `WD_ANOM_TRIP=3`,
+  `WD_ANOM_ADAPT=30` (`bin/nodeguard-watchdog:24`). Robustness rules,
+  all implemented: a stale or re-read kv snapshot discards the cycle
+  without touching the baseline (`bin/nodeguard-watchdog:94`); regime
+  changes (kill switch, attach state, feeds enforce) reseed the EWMA
+  state (`bin/nodeguard-watchdog:102`); a program-id change (reload or
+  reboot) discards exactly one cycle and keeps the trained baseline
+  (`bin/nodeguard-watchdog:105`), as does a negative delta (counter
+  reset; `bin/nodeguard-watchdog:130`); an anomalous cycle updates no
+  metric's mean or deviation until each metric's own bounded skip
+  streak forces adaptation, so an attack cannot train the detector
+  into silence (`bin/nodeguard-watchdog:135`); and a trip fires on the
+  transition only, one trip per episode
+  (`bin/nodeguard-watchdog:158`). Observe-only in every mode: it never
+  touches the kill switch, latch files, or any map.
 - **Port refresh**: compares `config[0]` against the port tailscaled
   actually bound (`ss -ulpn`) and rewrites it on change
-  (`bin/nodeguard-watchdog:21`). The tailscale RPM restarts tailscaled
+  (`bin/nodeguard-watchdog:214`). The tailscale RPM restarts tailscaled
   mid-update and can move the port; this closes the window within a
   minute.
 - **Lifeline probes** (allowlisted paths, from `LIFELINES` in
@@ -367,22 +403,22 @@ Every minute (`units/nodeguard-watchdog.timer:6`),
   datapath death or an upstream outage.
 - **Canary probe**: TCP connect to `CANARY_IP:443`, a target that must
   never appear in any allow source (`nodeguard-maps` refuses to load
-  one that does; `bin/ngmap.py:324`). Because the canary's return
+  one that does; `bin/ngmap.py:498`). Because the canary's return
   traffic traverses the blocklist lookup, an over-broad block entry, an
   inverted expiry comparison, or an encoder defect breaks the canary
   while lifelines stay green (ADR 0005).
 - **Triggers** (with a program attached and the kill switch clear):
   three consecutive canary failures while at least one lifeline passes
   means suspected over-blocking: `nodeguard-off --watchdog`, CRITICAL
-  with the stats snapshot as evidence (`bin/nodeguard-watchdog:106`).
+  with the stats snapshot as evidence (`bin/nodeguard-watchdog:336`).
   Five consecutive cycles of all lifelines failing: soft-off, since the
   cause may be an upstream outage nodeguard did not create
-  (`bin/nodeguard-watchdog:110`).
+  (`bin/nodeguard-watchdog:339`).
 - **Latched**: ten further all-fail cycles detach the XDP program
-  entirely (`bin/nodeguard-watchdog:117`). If the latch was
+  entirely (`bin/nodeguard-watchdog:345`). If the latch was
   watchdog-set (no manual marker), 15 fully clean cycles re-arm
   enforcement once per boot, tracked in `config[2]`
-  (`bin/nodeguard-watchdog:124`). Any second latch, and any manual
+  (`bin/nodeguard-watchdog:364`). Any second latch, and any manual
   `nodeguard-off`, is human-only recovery. While latched, a CRITICAL
   reminder repeats hourly.
 
@@ -426,10 +462,10 @@ node at every step.
 
 | Failure | Datapath effect | Recovery |
 |---|---|---|
-| Verifier reject or native attach fails | No program; all traffic passes | Unit fails visibly (`bin/nodeguard-attach:18`); attach-state alarm; skb mode only by human decision |
+| Verifier reject or native attach fails | No program; all traffic passes | Unit fails visibly (`bin/nodeguard-attach:37`); attach-state alarm; skb mode only by human decision |
 | XDP unit fails at boot | Pristine datapath, fail open | Attach-state alarm; host fully reachable |
 | Program attached, maps empty | None; miss = PASS | n/a |
-| Pin-spec drift (new object vs existing pins) | Attach refuses; fail open | Operator recreates pins per the maps-service instructions (`bin/ngmap.py:301`) |
+| Pin-spec drift (new object vs existing pins) | Attach refuses; fail open | Operator recreates pins per the maps-service instructions (`bin/ngmap.py:474`) |
 | Parse bug on an odd frame | PASS by code contract | Patch off-host, deploy via `nodeguard-reload` |
 | Kernel update rejects the program | Attach fails at boot; traffic flows | Rebuild in the container, redeploy; alarmed meanwhile |
 | Over-broad block entry | Non-allowlisted internet unreachable | Canary fails 3 cycles while lifelines pass: auto soft-off, CRITICAL |
@@ -463,9 +499,9 @@ On-host layout (installed by `deploy/deploy.sh`):
 | `/usr/local/sbin/` | the `nodeguard-*` scripts; `block`/`unblock`/`list`/`flush`/`off`/`on` as symlinks to `nodeguard-cli` |
 | `/etc/nodeguard/` | `nodeguard.env`, `allow4.txt`, `allow6.txt`, `responder.conf`, `protected.conf`, `sids.conf` |
 | `/etc/systemd/system/` | units, timers, the per-host device drop-in, the Suricata limits drop-in |
-| `/sys/fs/bpf/nodeguard/` | the six pinned maps (reset at boot) |
-| `/run/nodeguard/` | prog id, watchdog counters, latch markers (tmpfs, tmpfiles.d) |
-| `/var/lib/nodeguard/` | `blocks.json` responder journal |
+| `/sys/fs/bpf/nodeguard/` | the seven pinned maps (reset at boot) |
+| `/run/nodeguard/` | prog id, watchdog counters, latch markers, `responder.kv` counters (tmpfs, tmpfiles.d) |
+| `/var/lib/nodeguard/` | `blocks.json` responder journal, `mapstat.kv` sweep cache, `wd_baseline.json` and `wd_anomaly.kv` anomaly-detector state, `feeds/` loader state |
 
 Build: `docker run --rm --privileged -v "$PWD:/work" fedora:44 /bin/bash
 /work/build/build.sh` on any Fedora 44 x86_64 machine with docker or
@@ -495,15 +531,15 @@ ever modified:
 
 The map declarations in `src/nodeguard_kern.c` are normative. The build
 loads the object and extracts type, key size, value size,
-`max_entries`, and flags for all six maps into `nodeguard-maps.spec`
-(`build/build.sh:26`), so the object and the maps service share one
+`max_entries`, and flags for all seven maps into `nodeguard-maps.spec`
+(`build/build.sh:23`), so the object and the maps service share one
 source of truth by construction. At every start, `ngmap.py create-maps`
 creates missing pins from the spec and verifies existing ones; any
 mismatch fails loudly with recovery instructions and blocks attach by
-design (`bin/ngmap.py:301`). The attach wrapper then independently
+design (`bin/ngmap.py:474`). The attach wrapper then independently
 verifies that every pinned map id appears in the attached program's
 `map_ids`; on divergence it unloads its own program and exits nonzero
-(`bin/nodeguard-attach:31`), so a firewall silently enforcing against
+(`bin/nodeguard-attach:50`), so a firewall silently enforcing against
 unmanaged maps is structurally impossible. bpffs resets at boot; maps
 are recreated and the allowlist rebuilt by `nodeguard-maps.service`,
 and lost blocks are an accepted consequence (ADR 0003). Unload is
@@ -517,14 +553,14 @@ Three sources feed the allow maps on every maps start: the static
 per-host files (tag 1), generated protected remotes (tag 2) from
 `protected.conf` directives (current tailscale DERP relay addresses,
 current A/AAAA records of listed names, literal CIDRs;
-`bin/nodeguard-maps:19`), and, where `WAN_DYNAMIC_ALLOW=yes`, the live
+`bin/nodeguard-maps:21`), and, where `WAN_DYNAMIC_ALLOW=yes`, the live
 default gateway, DHCP server, and own WAN address, each read fresh as a
 `/32` so a renumbered WAN cannot rot the entries
-(`bin/nodeguard-maps:67`). `ngmap.py reconcile-allow` then converges
+(`bin/nodeguard-maps:74`). `ngmap.py reconcile-allow` then converges
 the maps to exactly this desired set, adding and deleting
-(`bin/ngmap.py:314`); removals therefore take effect on restart, not at
+(`bin/ngmap.py:488`); removals therefore take effect on restart, not at
 the next reboot. Reconciliation refuses to proceed if any allow source
-covers the configured canary target (`bin/ngmap.py:324`), preserving
+covers the configured canary target (`bin/ngmap.py:498`), preserving
 the over-block probe's blindness guarantee. The operator's stable
 remote egress addresses are a mandatory static entry before
 enforcement, so a false positive cannot cause a lockout.
@@ -537,7 +573,7 @@ hitless (no detach, no link blip). The only sanctioned paths are
 the map write with a marker file (`manual_off` or `watchdog_off`)
 recording who latched. `create-maps` initializes the switch to 0 only
 when the config map is newly created; an existing value is preserved
-(`bin/ngmap.py:307`), so restarting the maps service can never silently
+(`bin/ngmap.py:481`), so restarting the maps service can never silently
 re-arm enforcement that a human or the watchdog switched off. The
 watchdog's bounded auto re-arm (once per boot, watchdog-set latches
 only, 15 clean cycles, counted in `config[2]`) makes a routine
@@ -549,7 +585,7 @@ latches for a human.
 Automated enforcement must be unspoofable. The responder blocks only on
 TCP alerts whose flow counters prove bidirectional exchange
 (`pkts_toclient >= 1`, `pkts_toserver >= 2`;
-`bin/nodeguard-responder:225`): TCP sequence numbers make completing or
+`bin/nodeguard-responder:371`): TCP sequence numbers make completing or
 continuing a handshake blind infeasible, so a blind attacker cannot
 fabricate a flow this host answered and then continued. Spoofed single
 UDP or ICMP packets, the trivial poisoning vector against any address
@@ -580,11 +616,18 @@ One direction, one file handoff: `nodeguard-watchdog` writes the
 `nodeguard-status --kv` snapshot to `/run/zabbix/nodeguard.kv` every
 minute (`bin/nodeguard-watchdog:16`); the Zabbix agent's UserParameter
 reads that file (`etc/zabbix-userparameter-nodeguard.conf:7`); the
-template (`templates/zabbix-nodeguard-template.json`) turns the keys
-into items and triggers, including the `ng.feeds_*` items with their
-per-feed staleness and config-drift triggers; dashboards sit on top
-(three fleet-scaling dashboards are proposed in OpenSpec change
-`add-nodeguard-telemetry`, generated from the planned `zbx/` suite).
+template turns the keys into items and triggers, including the
+`ng.feeds_*` items with their per-feed staleness and config-drift
+triggers. The v2 template (generated deterministically by
+`zbx/gen-template.py`, gated by `zbx/check_template.py`, previewed as
+`zbx/preview-template-v2.json`; the committed
+`templates/zabbix-nodeguard-template.json` is the v1 baseline until the
+phase 2 import) reads the whole kv file through one master item,
+`nodeguard.kv.raw` (`etc/zabbix-userparameter-nodeguard.conf:10`);
+every other item is dependent on it with a `(?m)^ng\.<field>=(.+)$`
+extraction regex, so the agent polls once per minute instead of once
+per item. The three fleet-scaling dashboards are generated from the
+`zbx/` suite (`zbx/dashboards.py`) against the live API.
 
 The file handoff is forced by SELinux, not taste: `zabbix_agent_t`
 cannot make `bpf()` syscalls, and `sudo` does not change the SELinux
@@ -619,23 +662,46 @@ staleness of the whole chain is one `fuzzytime` check.
 | `feeds.conf` | `FEEDS_MAX_COVERAGE_V6_48` | `46137344` | Aggregate v6 coverage cap in /48 equivalents; exceeding it aborts the run |
 | `feeds.conf` | `FEEDS_MAX_CHURN_PCT` | `30` | Composition churn brake; a larger swing is held for operator review |
 | `feeds.conf` | `FEEDS_MAX_STALE_S` | `1209600` | Upstream snapshot staleness cap (14 days); a staler feed fails and its entries decay |
-| `nodeguard.env` | `WD_ANOM_MODE` / `WD_ANOM_K` / `WD_ANOM_FLOOR` / `WD_ANOM_TRIP` / `WD_ANOM_ADAPT` | (proposed) | Anomaly-detector tunables proposed in `add-nodeguard-telemetry`; not yet implemented |
-| build-time | `NG_TTL_LOW_FLOOR` | (proposed) `5` | TTL-outlier counting floor for the stats2 counters proposed in `add-nodeguard-telemetry`; not yet implemented |
+| `nodeguard.env` | `WD_ANOM_MODE` / `WD_ANOM_K` / `WD_ANOM_FLOOR` / `WD_ANOM_TRIP` / `WD_ANOM_ADAPT` | `shadow` / `8` / `500` / `3` / `30` | Anomaly-detector tunables (`bin/nodeguard-watchdog:24`): mode `off`/`shadow`/`on` (shadow logs and exports `ng.anomaly_shadow_count` while `anomaly_count` stays 0), deviation multiplier, per-cycle absolute floor, consecutive-cycle trip count, per-metric bounded skip streak |
+| build-time | `NG_TTL_LOW_FLOOR` | `5` | TTL-outlier counting floor for the stats2 `ttl_low` counter (`src/nodeguard_kern.c:35`); telemetry threshold only, never a verdict input |
 
 `sids.conf` is reloaded live on mtime change
-(`bin/nodeguard-responder:193`); the allow files and `protected.conf`
+(`bin/nodeguard-responder:321`); the allow files and `protected.conf`
 take effect at the next maps-service start.
 
 ### Observability and error handling
 
-The eight per-CPU stats counters name every code path
-(`src/nodeguard_kern.c:51`). `nodeguard-status` aggregates attach
-state, kill switch and latch owner, port match, block counts, counters,
-unit states, and Suricata's `capture.kernel_drops`; `--kv` feeds the
-monitoring system. Scripts log through `ng_log` to the journal with
-severity; the watchdog's CRITICALs carry evidence (the stats snapshot
-on an over-block trip). Errors fail loud and open: attach failures,
-spec drift, and canary refusals all exit nonzero rather than degrade
+The eight per-CPU stats counters name every verdict path
+(`src/nodeguard_kern.c:77`), and the seven stats2 protocol-sanity
+counters (`src/nodeguard_kern.c:62`) count implausible frames: the four
+impossible TCP flag combinations, low TTL or hop limit, and fragments
+per family. The sanity counting runs inside the per-family handlers
+BEFORE the kill switch (v4 `src/nodeguard_kern.c:205`, v6
+`src/nodeguard_kern.c:283`), so scan visibility survives a latch, and
+is count-only by contract: no stats2 branch influences a verdict (ADR
+0007). `nodeguard-status` aggregates attach state, kill switch and
+latch owner, port match, block counts, counters, unit states, and
+Suricata's `capture.kernel_drops`; `--kv` feeds the monitoring system.
+
+The kv path is O(1) in blocklist population: trie-walk products (block
+counts per family, utilization, top-blocked, walk duration) come from
+`/var/lib/nodeguard/mapstat.kv`, written ONLY by the 10-minute sweep
+(single-writer rule, `bin/ngmap.py:287`) and read by `nodeguard-status`
+with its age exported as `ng.sweep_age`, so a stale cache is a visible
+signal rather than a silent one. The kv discipline is fail to visible
+unknown: a value that cannot be read is OMITTED so its Zabbix item goes
+unsupported (plus an explicit `stats_read_fail`/`stats2_read_fail` flag
+where the failure is a local tool breaking); nothing coerces a failure
+to 0 (`bin/nodeguard-status:11`). One accepted artifact: during a
+hitless reload both dispatcher members briefly count the same traffic,
+so the cycle spanning a program-id change can double-count `pass`; the
+anomaly detector discards exactly that cycle
+(`bin/nodeguard-watchdog:105`).
+
+Scripts log through `ng_log` to the journal with severity; the
+watchdog's CRITICALs carry evidence (the stats snapshot on an
+over-block trip). Errors fail loud and open: attach failures, spec
+drift, and canary refusals all exit nonzero rather than degrade
 silently, and the monitoring attach-state item reads
 `xdp-loader status`, never unit state, because the oneshot unit stays
 green after a watchdog detach.
@@ -670,6 +736,19 @@ One bullet per ADR; the rationale and evidence live in the ADRs under
   over-blocking, with a hitless kill switch and bounded auto re-arm.
   Consequence: the failure class where the firewall works too well is
   observable and self-limiting.
+- [`docs/adr/0006-load-threat-intel-through-the-journaled-cas-owner.md`](adr/0006-load-threat-intel-through-the-journaled-cas-owner.md):
+  threat-intel feeds load through a journaled compare-and-swap owner
+  sharing the block maps with the responder and the CLI; bogon-class
+  feeds are excluded at source selection. Consequence: three writers
+  coexist without ownership collisions, and a dead loader decays to no
+  enforcement via the in-kernel TTL.
+- [`docs/adr/0007-add-counters-in-a-second-stats-map-and-keep-trie-walks-off-the-minute-path.md`](adr/0007-add-counters-in-a-second-stats-map-and-keep-trie-walks-off-the-minute-path.md):
+  new telemetry counters live in a second stats2 map with append-only
+  headroom, sanity counting runs before the kill switch and is
+  count-only, and trie walks stay off the 1-minute path (the sweep is
+  the sole writer of the mapstat cache). Consequence: telemetry can
+  grow without map parameter drift, but block counts lag up to one
+  10-minute sweep period.
 
 ## 10. Quality Requirements
 
@@ -678,14 +757,14 @@ One bullet per ADR; the rationale and evidence live in the ADRs under
   pin-reuse mismatch, because the netns rehearsal runs the exact
   production sequence: spec-driven pin creation, dispatcher attach
   against the pins, map-identity check, encoder round-trips
-  (block/list/config/sweep), unload by id (`build/build.sh:66`).
+  (block/list/config/sweep), unload by id (`build/build.sh:101`).
 - **Deploy-time verification**: `bash -n` on every script,
   `py_compile` on the Python, `systemd-analyze verify` on every unit,
   and a sha256 of the installed object (`deploy/deploy.sh`).
 - **Runtime self-verification**: attach refuses on map-identity
   divergence; maps service refuses on spec drift or a canary-covering
   allow entry; the responder refuses to start with empty `HOME_NETS`
-  (`bin/nodeguard-responder:61`).
+  (`bin/nodeguard-responder:84`).
 - **Operational gates**: monitoring items exist before the first attach
   (phase 2 entry gate); alarm drills must fire before enforcement
   (phase 2 exit gate); the responder runs a mandatory dry-run of 48 to
@@ -738,7 +817,7 @@ Known accepted limitations:
   severity-1 rule is contained by the rate caps and tuned via
   `sids.conf`, not prevented.
 - No IPv6 extension-header walk in the WireGuard port pass
-  (`src/nodeguard_kern.c:190`): a tunneled-over-exotic-v6 corner would
+  (`src/nodeguard_kern.c:295`): a tunneled-over-exotic-v6 corner would
   fall through to the ordinary lookups, which fail open.
 - `mkyaml.py` re-serializes the stock Suricata config and loses its
   comments; `build/suricata-stock.yaml` is kept beside it for drift
@@ -790,14 +869,16 @@ OpenSpec proposal cycle:
 2. Volumetric anomaly alerting: the watchdog diffs successive stats-map
    snapshots against a rolling baseline and alerts on spikes. Userspace
    only; no new drop path. Closes the distributed low-rate flood blind spot
-   at the observability layer. Proposed in OpenSpec change
-   `add-nodeguard-telemetry` (section 6 there: local EWMA plus Zabbix
-   seasonal triggers).
+   at the observability layer. Implemented in shadow mode by OpenSpec
+   change `add-nodeguard-telemetry` (section 6.3; local EWMA plus Zabbix
+   seasonal triggers); promotion to `on` is gated on the phase 5 shadow
+   review.
 3. Protocol-sanity counters in the XDP program: count implausible frames
-   (impossible TCP flag combinations, TTL outliers) into new stats slots;
-   every new branch still resolves to XDP_PASS. Telemetry, never
-   enforcement. Proposed in OpenSpec change `add-nodeguard-telemetry`
-   (the `stats2` map).
+   (impossible TCP flag combinations, TTL outliers, fragments) into new
+   stats slots; every new branch still resolves to XDP_PASS. Telemetry,
+   never enforcement. Implemented by OpenSpec change
+   `add-nodeguard-telemetry` (the `stats2` map,
+   `src/nodeguard_kern.c:62`).
 
 Deliberately deferred, evidence-gated: per-source rate limiting in the
 datapath. It would be a second, independent drop condition; it is not built

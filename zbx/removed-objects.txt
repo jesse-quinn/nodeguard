@@ -1,0 +1,24 @@
+# Sanctioned template-object removals, consumed by check_template.py.
+#
+# The baseline checks fail on any object that exists in the committed
+# baseline template but not in the generated one, so an ACCIDENTAL
+# disappearance fails the build. A DESIGNED removal (for example the
+# static per-feed items and triggers retired after the 24h LLD parity
+# window, design section 7) is sanctioned by listing it here, in the
+# same commit that removes it from the generator. This file is itself
+# the explicit, recorded removal step the tasks require.
+#
+# One entry per line, four pipe-separated fields:
+#   kind|identifier|reason|date
+#
+# kind is one of: item, trigger, discovery_rule, item_prototype,
+# trigger_prototype. Items and discovery rules are identified by key,
+# triggers by name; prototypes by "<discovery rule key>/<prototype key
+# or name>". Blank lines and # comments are ignored.
+#
+# A sanctioned object that is still PRESENT in the generated template
+# fails the check: a sanction entry must land in the same commit as the
+# removal, never earlier, so a stale entry is visible drift rather than
+# a permanent blind spot.
+#
+# No entries yet.

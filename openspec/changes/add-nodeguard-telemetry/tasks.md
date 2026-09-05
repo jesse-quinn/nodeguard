@@ -295,7 +295,11 @@ and any restart reloads it.
       resolve
 - [ ] 4.9 Gate (fleet-scale drill): run the generator plan with a
       synthetic third host in the group and verify the plan output
-      covers it in every dashboard with no code edit
+      covers it in every dashboard with no code edit; the synthetic
+      host must carry a visible name different from its technical
+      name, and the drill asserts the plan's dataset host patterns
+      equal visible names (Zabbix matches dataset host patterns
+      against the visible name)
 
 ## 5. Phase 5: anomaly shadow window
 

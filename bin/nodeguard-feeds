@@ -738,15 +738,21 @@ class Runner:
             f"ng.feeds_failed={len(set(self.failed))}",
             f"ng.feeds_map_errors={self.map_errors}",
         ]
+        # SAFETY: per-feed keys are emitted only after a first success;
+        # a never-run or wiped feed shows visible no-data, never green
+        # zero, and stays out of LLD discovery until it is real.
         succ = []
         for feed in feeds:
             ts = int(self.feed_meta(feed).get("last_success_ts", 0))
             ch = self.feed_meta(feed).get("last_changed_ts", 0)
-            lines.append(f"ng.feeds_last_success_ts_{feed}={ts}")
-            lines.append(
-                f"ng.feeds_snapshot_age_{feed}={int(self.now - ch) if ch else 0}")
-            succ.append(ts)
-        lines.append(f"ng.feeds_last_success_ts_min={min(succ) if succ else 0}")
+            if ts > 0:
+                lines.append(f"ng.feeds_last_success_ts_{feed}={ts}")
+                succ.append(ts)
+            if ch:
+                lines.append(
+                    f"ng.feeds_snapshot_age_{feed}={int(self.now - ch)}")
+        if succ:
+            lines.append(f"ng.feeds_last_success_ts_min={min(succ)}")
         with open(KV + ".tmp", "w") as f:
             f.write("\n".join(lines) + "\n")
         os.replace(KV + ".tmp", KV)

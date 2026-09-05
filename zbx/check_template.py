@@ -10,15 +10,29 @@ Contract (nonzero exit on any failure):
     per-feed key while excluding the _min aggregate.
 (b) Display names of items that existed in the committed v1 template are
     byte-for-byte unchanged: dashboards address svggraph datasets by item
-    NAME pattern, so a rename would silently empty every graph.
+    NAME pattern, so a rename would silently empty every graph. LLD item
+    prototype display names are covered too, scoped per discovery rule:
+    the Capacity honeycomb's "feed * snapshot age" pattern matches only
+    the prototype name.
 (c) uuids of every pre-existing object (template group, template, items
-    by key, triggers by name) are unchanged versus the git HEAD version
-    of templates/zabbix-nodeguard-template.json, read via git show. A
+    by key, triggers by name, discovery rules by key, and item and
+    trigger prototypes scoped per discovery rule) are unchanged versus
+    the baseline template. The baseline is the git HEAD version of
+    templates/zabbix-nodeguard-template.json read via git show, or the
+    file named by --baseline (for the gitless build container). A
     changed uuid means delete-and-recreate on import: itemid churn and
     irreversible history loss.
 (d) Every template item key is either the master item, an LLD artifact
     (discovery rule or prototype key), or maps onto the documented kv key
     list (a trailing .rate twin maps onto its source field).
+
+Designed removals: an object present in the baseline but deliberately
+retired (for example the static per-feed items after the LLD parity
+window) is sanctioned by an entry in zbx/removed-objects.txt (kind,
+identifier, reason, date). A sanctioned object may be absent from the
+generated template without failing (b) or (c); anything missing and NOT
+sanctioned still fails, and a sanctioned object still present in the
+generated template fails as stale-sanction drift.
 
 Intended to run in build gating so template drift fails the build, not
 the 2am operator. Stdlib only; read-only.
@@ -35,6 +49,9 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_TEMPLATE = os.path.join(REPO_ROOT, "zbx", "preview-template-v2.json")
 DEFAULT_SAMPLE = os.path.join(REPO_ROOT, "zbx", "sample-nodeguard.kv")
 BASELINE_GIT_PATH = "templates/zabbix-nodeguard-template.json"
+REMOVED_OBJECTS = os.path.join(REPO_ROOT, "zbx", "removed-objects.txt")
+REMOVED_KINDS = {"item", "trigger", "discovery_rule", "item_prototype",
+                 "trigger_prototype"}
 
 MASTER_KEY = "nodeguard.kv.raw"
 LLD_KEY = "nodeguard.feeds.discovery"
@@ -109,7 +126,18 @@ def load_template(path):
     return doc["zabbix_export"]
 
 
-def load_baseline(git_ref_path):
+def load_baseline(git_ref_path, baseline_path=None):
+    """Baseline template: the committed HEAD version via git show by
+    default, or an explicit file when --baseline is given (the build
+    container has no .git, so it passes the committed file directly)."""
+    if baseline_path is not None:
+        try:
+            with open(baseline_path) as fh:
+                return json.load(fh)["zabbix_export"]
+        except (OSError, ValueError, KeyError) as e:
+            print("error: cannot read baseline file %s: %s"
+                  % (baseline_path, e), file=sys.stderr)
+            sys.exit(2)
     try:
         out = subprocess.run(
             ["git", "-C", REPO_ROOT, "show", "HEAD:%s" % git_ref_path],
@@ -119,6 +147,35 @@ def load_baseline(git_ref_path):
               % (git_ref_path, e), file=sys.stderr)
         sys.exit(2)
     return json.loads(out.stdout)["zabbix_export"]
+
+
+def load_removed(path):
+    """Sanctioned removals from zbx/removed-objects.txt, as
+    {kind: {identifier}}. Malformed lines are hard errors: the sanction
+    record is load-bearing, so a half-written entry must not silently
+    sanction nothing (or everything)."""
+    removed = {k: set() for k in REMOVED_KINDS}
+    if not os.path.exists(path):
+        return removed
+    with open(path) as fh:
+        for n, raw in enumerate(fh, 1):
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = line.split("|")
+            if len(parts) != 4 or not all(p.strip() for p in parts):
+                print("error: %s:%d: expected kind|identifier|reason|"
+                      "date, got %r" % (path, n, line), file=sys.stderr)
+                sys.exit(2)
+            kind, ident = parts[0].strip(), parts[1].strip()
+            if kind not in REMOVED_KINDS:
+                print("error: %s:%d: unknown kind %r (expected one of "
+                      "%s)" % (path, n, kind,
+                               ", ".join(sorted(REMOVED_KINDS))),
+                      file=sys.stderr)
+                sys.exit(2)
+            removed[kind].add(ident)
+    return removed
 
 
 def walk_items(exp):
@@ -182,35 +239,77 @@ def check_regexes(c, exp, sample):
     c.ok("checked %d extraction regexes against the sample" % n)
 
 
-def check_names(c, exp, base):
-    """(b) v1 display names byte-for-byte unchanged."""
+def proto_pairs(exp, field, ident, value="uuid"):
+    """Prototype (identifier, value) pairs scoped per owning discovery
+    rule, so identifiers stay unique if a second rule ever appears."""
+    for dr in discovery_rules(exp):
+        for p in dr.get(field, []):
+            yield ("%s/%s" % (dr["key"], p[ident]), p[value])
+
+
+def check_names(c, exp, base, removed):
+    """(b) baseline display names byte-for-byte unchanged, items and LLD
+    item prototypes alike; sanctioned removals may be absent."""
     new_names = {it["key"]: it["name"] for it in walk_items(exp)}
     missing, renamed = [], []
     for it in walk_items(base):
         if it["key"] not in new_names:
-            missing.append(it["key"])
+            if it["key"] not in removed["item"]:
+                missing.append(it["key"])
         elif new_names[it["key"]] != it["name"]:
             renamed.append("%s: %r != %r"
                            % (it["key"], new_names[it["key"]], it["name"]))
     if missing:
-        c.fail("v1-names", "v1 items missing from v2: %s"
+        c.fail("v1-names", "baseline items missing from v2 and not "
+                           "sanctioned in removed-objects.txt: %s"
                % ", ".join(missing))
     if renamed:
         c.fail("v1-names", "display names changed: %s" % "; ".join(renamed))
     if not missing and not renamed:
-        c.ok("all v1 item display names carried byte-for-byte")
+        c.ok("all baseline item display names carried byte-for-byte")
+
+    new_proto = dict(proto_pairs(exp, "item_prototypes", "key", "name"))
+    p_missing, p_renamed = [], []
+    for ident, name in proto_pairs(base, "item_prototypes", "key", "name"):
+        if ident not in new_proto:
+            if ident not in removed["item_prototype"]:
+                p_missing.append(ident)
+        elif new_proto[ident] != name:
+            p_renamed.append("%s: %r != %r"
+                             % (ident, new_proto[ident], name))
+    if p_missing:
+        c.fail("prototype-names",
+               "baseline item prototypes missing from v2 and not "
+               "sanctioned: %s" % ", ".join(p_missing))
+    if p_renamed:
+        c.fail("prototype-names",
+               "item prototype display names changed (the Capacity "
+               "honeycomb's 'feed * snapshot age' pattern matches the "
+               "prototype name): %s" % "; ".join(p_renamed))
+    if not p_missing and not p_renamed:
+        c.ok("all baseline item prototype display names carried "
+             "byte-for-byte")
 
 
-def check_uuids(c, exp, base):
-    """(c) uuids of pre-existing objects unchanged vs git HEAD."""
+def check_uuids(c, exp, base, removed):
+    """(c) uuids of pre-existing objects unchanged vs the baseline;
+    sanctioned removals may be absent, but a sanctioned object still
+    present in v2 is stale-sanction drift and fails."""
     problems = []
 
-    def cmp_map(label, base_pairs, new_pairs):
+    def cmp_map(label, base_pairs, new_pairs, sanctioned=frozenset()):
         new_map = dict(new_pairs)
         for key, buuid in base_pairs:
             nuuid = new_map.get(key)
             if nuuid is None:
-                problems.append("%s %r missing from v2" % (label, key))
+                if key not in sanctioned:
+                    problems.append("%s %r missing from v2 (not "
+                                    "sanctioned in removed-objects.txt)"
+                                    % (label, key))
+            elif key in sanctioned:
+                problems.append("%s %r is sanctioned as removed but "
+                                "still present in v2 (stale entry in "
+                                "removed-objects.txt)" % (label, key))
             elif nuuid != buuid:
                 problems.append("%s %r uuid changed %s -> %s"
                                 % (label, key, buuid, nuuid))
@@ -223,13 +322,24 @@ def check_uuids(c, exp, base):
             [(t["template"], t["uuid"]) for t in exp.get("templates", [])])
     cmp_map("item",
             [(i["key"], i["uuid"]) for i in walk_items(base)],
-            [(i["key"], i["uuid"]) for i in walk_items(exp)])
+            [(i["key"], i["uuid"]) for i in walk_items(exp)],
+            removed["item"])
     cmp_map("trigger",
             [(t["name"], t["uuid"]) for t in walk_triggers(base)],
-            [(t["name"], t["uuid"]) for t in walk_triggers(exp)])
+            [(t["name"], t["uuid"]) for t in walk_triggers(exp)],
+            removed["trigger"])
     cmp_map("discovery rule",
             [(d["key"], d["uuid"]) for d in discovery_rules(base)],
-            [(d["key"], d["uuid"]) for d in discovery_rules(exp)])
+            [(d["key"], d["uuid"]) for d in discovery_rules(exp)],
+            removed["discovery_rule"])
+    cmp_map("item prototype",
+            list(proto_pairs(base, "item_prototypes", "key")),
+            list(proto_pairs(exp, "item_prototypes", "key")),
+            removed["item_prototype"])
+    cmp_map("trigger prototype",
+            list(proto_pairs(base, "trigger_prototypes", "name")),
+            list(proto_pairs(exp, "trigger_prototypes", "name")),
+            removed["trigger_prototype"])
     if problems:
         c.fail("uuid-carry", "; ".join(problems))
     else:
@@ -277,6 +387,11 @@ def main():
     ap.add_argument("--sample", default=DEFAULT_SAMPLE,
                     help="sample kv file (default: "
                          "zbx/sample-nodeguard.kv)")
+    ap.add_argument("--baseline", default=None,
+                    help="baseline template JSON file; default is the "
+                         "committed HEAD version via git show, which "
+                         "needs a .git directory (the build container "
+                         "passes the committed file explicitly instead)")
     args = ap.parse_args()
 
     if not os.path.exists(args.template):
@@ -286,12 +401,13 @@ def main():
     with open(args.sample) as fh:
         sample = fh.read()
     exp = load_template(args.template)
-    base = load_baseline(BASELINE_GIT_PATH)
+    base = load_baseline(BASELINE_GIT_PATH, args.baseline)
+    removed = load_removed(REMOVED_OBJECTS)
 
     c = Checker()
     check_regexes(c, exp, sample)
-    check_names(c, exp, base)
-    check_uuids(c, exp, base)
+    check_names(c, exp, base, removed)
+    check_uuids(c, exp, base, removed)
     check_keys(c, exp)
 
     if c.failures:

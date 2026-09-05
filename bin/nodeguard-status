@@ -97,9 +97,13 @@ if [ "$kv" -eq 1 ]; then
     # prog_match: emitted only when an expectation exists; attached with
     # no expectation file (tmpfs cleared, pre-tooling attach) is a
     # visible-unsupported state, never a silent 1 or false-paging 0.
-    if [ -f "$NG_RUN/expected_prog_id" ]; then
+    # prog_match needs BOTH an expectation and a readable live id; a
+    # broken xdp-loader (attach_state unknown) must not false-page the
+    # HIGH mismatch trigger, so the key is omitted and the Warning-level
+    # attach_state trigger carries that failure instead.
+    if [ -f "$NG_RUN/expected_prog_id" ] && [ -n "$prog_id" ]; then
         expected=$(cat "$NG_RUN/expected_prog_id")
-        if [ -n "$prog_id" ] && [ "$prog_id" = "$expected" ]; then
+        if [ "$prog_id" = "$expected" ]; then
             echo "ng.prog_match=1"
         else
             echo "ng.prog_match=0"

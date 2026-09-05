@@ -11,13 +11,14 @@ Contract:
   canonical fleet definition; resolve_group() returns the group id and its
   member hosts live, so widgets that need per-host enumeration are generated
   from the group's current membership at run time.
-- Widget builders (itemvalue, gauge, svggraph, pie, honeycomb, tophosts,
-  url) return dashboard widget dicts for dashboard.create/update. svggraph
+- Widget builders (itemvalue, gauge, svggraph, pie, honeycomb, url)
+  return dashboard widget dicts for dashboard.create/update. svggraph
   and pie datasets address hosts by PATTERN and items by NAME pattern, so a
-  new host's items match without a code edit. Field names for gauge,
-  honeycomb, and tophosts follow the 7.4 export format and must be verified
-  with one plan-mode diff against a hand-exported dashboard before the
-  first confirmed apply.
+  new host's items match without a code edit; Zabbix resolves those host
+  patterns against the host's VISIBLE name, not the technical name. Field
+  names for gauge and honeycomb follow the 7.4 export format and must be
+  verified with one plan-mode diff against a hand-exported dashboard before
+  the first confirmed apply.
 - 72-column grid helpers and the Okabe-Ito palette. host_color() hashes the
   host name into the palette so a host keeps its color when the fleet grows
   or the member list reorders.
@@ -204,9 +205,10 @@ def svggraph(x, y, w, h, name, datasets, refseq, stacked=False,
              legend_lines=2):
     """SVG graph. datasets is [(host_patterns, item_patterns, color), ...].
 
-    host_patterns and item_patterns may each be a string or a list; items
-    are addressed by display-NAME pattern per the template's display-name
-    contract, so a rename would empty the graph (guarded by
+    host_patterns and item_patterns may each be a string or a list; host
+    patterns match the Zabbix VISIBLE host name (API search on "name"),
+    and items are addressed by display-NAME pattern per the template's
+    display-name contract, so a rename would empty the graph (guarded by
     check_template.py).
     """
     fl = [_f(FIELD_STR, "reference", refseq.next())]
@@ -225,7 +227,8 @@ def svggraph(x, y, w, h, name, datasets, refseq, stacked=False,
 
 
 def pie(x, y, w, h, name, host_pattern, item_patterns, colors, refseq):
-    """Pie chart: one dataset of item name patterns on one host pattern."""
+    """Pie chart: one dataset of item name patterns on one host pattern.
+    The host pattern matches the Zabbix VISIBLE host name."""
     fl = [_f(FIELD_STR, "reference", refseq.next()),
           _f(FIELD_STR, "ds.0.hosts.0", host_pattern)]
     for j, ip in enumerate(item_patterns):
@@ -248,17 +251,6 @@ def honeycomb(x, y, w, h, name, groupid, item_pattern, thresholds=()):
         fl += [_f(FIELD_STR, "thresholds.%d.color" % i, color),
                _f(FIELD_STR, "thresholds.%d.threshold" % i, val)]
     return widget("honeycomb", x, y, w, h, name, fl)
-
-
-def tophosts(x, y, w, h, name, groupid, columns):
-    """Top hosts widget; columns is [(label, item_name_pattern), ...]."""
-    fl = [_f(FIELD_GROUP, "groupids.0", groupid)]
-    for i, (label, item_pattern) in enumerate(columns):
-        fl += [_f(FIELD_STR, "columns.%d.name" % i, label),
-               _f(FIELD_INT, "columns.%d.data" % i, 1),
-               _f(FIELD_STR, "columns.%d.item" % i, item_pattern)]
-    fl.append(_f(FIELD_INT, "column", 0))
-    return widget("tophosts", x, y, w, h, name, fl)
 
 
 def url_widget(x, y, w, h, name, url):

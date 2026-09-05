@@ -47,7 +47,7 @@ nsenter --net=/run/netns/ngspecns xdp-loader load -m skb -p "$SPEC_PIN" lo "$OUT
 # core six AND to equal the object's BTF-declared map set; a hardcoded
 # list here once silently omitted a new map from the whole contract.
 python3 - "$SPEC_PIN" "$OUT/nodeguard-maps.spec" "$OUT/nodeguard_kern.o" <<'PYEOF'
-import json, re, subprocess, sys
+import json, subprocess, sys
 pin, spec, obj = sys.argv[1], sys.argv[2], sys.argv[3]
 import os
 wanted = sorted(os.listdir(pin))
@@ -55,14 +55,31 @@ core = {"allow4", "allow6", "block4", "block6", "config", "stats"}
 missing_core = core - set(wanted)
 if missing_core:
     sys.exit(f"core maps missing from pins: {sorted(missing_core)}")
-btf = subprocess.run(["bpftool", "btf", "dump", "file", obj],
-                     capture_output=True, text=True, check=True).stdout
-btf_maps = set()
-for m in re.finditer(r"VAR '([A-Za-z0-9_]+)'.*?linkage=global", btf):
-    btf_maps.add(m.group(1))
-declared = {n for n in btf_maps if n in set(wanted) | {"LICENSE"}} - {"LICENSE"}
-if set(wanted) != declared and declared:
-    sys.exit(f"pinned set {sorted(wanted)} != BTF-declared {sorted(declared)}")
+# INVARIANT (ADR 0007): declared maps come from the object's ".maps"
+# DATASEC, and pinned-vs-declared must match in BOTH directions. This is
+# the compensating control for the deliberately weakened identity check:
+# a map missing its LIBBPF_PIN_BY_NAME line fails the BUILD, never ships.
+btf = json.loads(subprocess.run(
+    ["bpftool", "-j", "btf", "dump", "file", obj],
+    capture_output=True, text=True, check=True).stdout)
+types = {t["id"]: t for t in btf.get("types", [])}
+declared = set()
+for t in types.values():
+    if t.get("kind") == "DATASEC" and t.get("name") == ".maps":
+        for member in t.get("vars", []):
+            var = types.get(member.get("type_id"), {})
+            if var.get("name"):
+                declared.add(var["name"])
+if not declared:
+    sys.exit("could not parse .maps DATASEC from BTF dump; refusing a "
+             "vacuous pass")
+unpinned = declared - set(wanted)
+if unpinned:
+    sys.exit(f"maps declared in BTF but not pinned by libbpf (missing "
+             f"LIBBPF_PIN_BY_NAME?): {sorted(unpinned)}")
+stray = set(wanted) - declared
+if stray:
+    sys.exit(f"pins with no BTF declaration: {sorted(stray)}")
 rows = {}
 for name in wanted:
     m = json.loads(subprocess.run(
@@ -142,31 +159,89 @@ def ttl_probe():
     s.sendto(ip + udp, ("127.0.0.1", 0))
     s.close()
 
+def frag4_probe():
+    # first fragment: MF set, offset 0
+    ip = struct.pack(">BBHHHBBH4s4s", 0x45, 0, 36, 1, 0x2000, 64, 17, 0,
+                     socket.inet_aton("127.0.0.1"),
+                     socket.inet_aton("127.0.0.1"))
+    s = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_RAW)
+    s.sendto(ip + b"\x00" * 16, ("127.0.0.1", 0))
+    s.close()
+
+def frag6_probe():
+    # IPv6 with a fragment header (nexthdr 44) via IPV6_HDRINCL
+    IPV6_HDRINCL = 36
+    ip6 = struct.pack(">IHBB16s16s", 0x60000000, 16, 44, 64,
+                      socket.inet_pton(socket.AF_INET6, "::1"),
+                      socket.inet_pton(socket.AF_INET6, "::1"))
+    fh = struct.pack(">BBHI", 17, 0, 0, 1) + b"\x00" * 8
+    s = socket.socket(socket.AF_INET6, socket.SOCK_RAW, socket.IPPROTO_UDP)
+    s.setsockopt(socket.IPPROTO_IPV6, IPV6_HDRINCL, 1)
+    s.sendto(ip6 + fh, ("::1", 0))
+    s.close()
+
+def stats_drops():
+    out = subprocess.run(["python3", "/work/bin/ngmap.py", "stats", "--json"],
+                         capture_output=True, text=True, check=True).stdout
+    d = json.loads(out)
+    return d["drop_v4"] + d["drop_v6"]
+
+def continuity():
+    # a real datagram must still be DELIVERED through the XDP hook
+    rx = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    rx.bind(("127.0.0.1", 40404))
+    rx.settimeout(3)
+    tx = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    tx.sendto(b"nodeguard-continuity", ("127.0.0.1", 40404))
+    data, _ = rx.recvfrom(64)
+    rx.close(); tx.close()
+    if data != b"nodeguard-continuity":
+        sys.exit("SANITY REHEARSAL FAIL: continuity datagram corrupted")
+
+drops_before = stats_drops()
 before = s2()
 tcp_probe(0x03)  # SYN+FIN
 tcp_probe(0x06)  # SYN+RST
 tcp_probe(0x00)  # NULL
 tcp_probe(0x29)  # FIN+PSH+URG (XMAS)
 ttl_probe()
+frag4_probe()
+frag6_probe()
+continuity()
 after = s2()
-for key in ("tcp_synfin", "tcp_synrst", "tcp_null", "tcp_xmas", "ttl_low"):
+for key in ("tcp_synfin", "tcp_synrst", "tcp_null", "tcp_xmas", "ttl_low",
+            "frag_v4", "frag_v6"):
     if after[key] <= before[key]:
         sys.exit(f"SANITY REHEARSAL FAIL: {key} did not increment "
                  f"({before[key]} -> {after[key]})")
-print("sanity counters increment:", {k: after[k] for k in after})
+if stats_drops() != drops_before:
+    sys.exit("SANITY REHEARSAL FAIL: anomalous probes were DROPPED; the "
+             "count-only contract is broken")
+print("sanity counters increment, verdicts stayed PASS:",
+      {k: after[k] for k in after})
 SANPY
 
-# 4c. Stats-read-failure drill: with bpftool unavailable the reader
-# must fail loudly (nonzero, empty stdout), never emit zeros.
+# 4c. Stats-read-failure drill, through the real kv contract: positive
+# control first (all 8 slots + stats_read_fail=0), then with bpftool
+# gone the kv output must carry stats_read_fail=1 and ZERO counter
+# lines; never zeros.
+mkdir -p /usr/local/lib/nodeguard /etc/nodeguard /run/nodeguard
+cp /work/bin/nodeguard-lib.sh /work/bin/ngmap.py /usr/local/lib/nodeguard/
+echo 'IFACE=lo' > /etc/nodeguard/nodeguard.env
+kv_out=$(nsenter --net=/run/netns/ngtest bash /work/bin/nodeguard-status --kv)
+for slot in pass drop_v4 drop_v6 pass_expired pass_allowlist pass_wgport pass_nonip pass_parsefail; do
+    printf '%s\n' "$kv_out" | grep -q "^ng\.$slot=" || { echo "KV DRILL FAIL: $slot missing in positive control"; exit 1; }
+done
+printf '%s\n' "$kv_out" | grep -q "^ng.stats_read_fail=0$" || { echo "KV DRILL FAIL: stats_read_fail!=0 in positive control"; exit 1; }
 mv /usr/sbin/bpftool /usr/sbin/bpftool.away
-if out=$(python3 /work/bin/ngmap.py stats --json 2>/dev/null); then
-    mv /usr/sbin/bpftool.away /usr/sbin/bpftool
-    echo "READ-FAIL DRILL FAIL: stats succeeded without bpftool: $out"
+kv_out=$(nsenter --net=/run/netns/ngtest bash /work/bin/nodeguard-status --kv)
+mv /usr/sbin/bpftool.away /usr/sbin/bpftool
+printf '%s\n' "$kv_out" | grep -q "^ng.stats_read_fail=1$" || { echo "KV DRILL FAIL: stats_read_fail=1 not emitted"; exit 1; }
+if printf '%s\n' "$kv_out" | grep -qE "^ng\.(pass|drop_v4|drop_v6)="; then
+    echo "KV DRILL FAIL: counter lines emitted despite read failure"
     exit 1
 fi
-[ -z "$out" ] || { mv /usr/sbin/bpftool.away /usr/sbin/bpftool; echo "READ-FAIL DRILL FAIL: nonempty stdout"; exit 1; }
-mv /usr/sbin/bpftool.away /usr/sbin/bpftool
-echo "read-fail drill: loud failure, no zeros"
+echo "read-fail drill: kv contract holds (fail flag, no counter lines)"
 
 # 4d. Unreferenced-pin tolerance (rollback direction): an extra pin the
 # object does not reference must not block load or identity.
@@ -191,6 +266,13 @@ for params in "$HOSTS_DIR"/*/suricata-params.json; do
     python3 "$REPO/build/mkyaml.py" --stock "$REPO/build/suricata-stock.yaml" \
         --params "$params" --out "$hostdir/suricata.yaml"
 done
+
+echo "== template drift gate =="
+python3 /work/zbx/gen-template.py --out /tmp/template-check.json
+python3 /work/zbx/check_template.py --sample /work/zbx/sample-nodeguard.kv \
+    --template /tmp/template-check.json \
+    --baseline /work/templates/zabbix-nodeguard-template.json
+echo "template drift gate passed"
 
 sha256sum "$OUT/nodeguard_kern.o" | tee "$OUT/nodeguard_kern.o.sha256"
 echo "== build complete =="

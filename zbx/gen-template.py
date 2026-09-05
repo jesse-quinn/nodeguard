@@ -197,6 +197,13 @@ def build_rows():
                      "(baselinedev explodes on near-zero baselines). "
                      "Imported at Information severity; promoted only "
                      "after 14 days of reviewed-quiet trend rows."),
+                trig("nodeguard v4 drop rate above static ceiling on "
+                     "{HOST.NAME}",
+                     "min(%s,5m)>5000" % iref(kv_key("drop_v4")),
+                     "INFO",
+                     "Placeholder ceiling; value retuned from phase 5 "
+                     "shadow data (tasks.md 5.4). Backstop for slow "
+                     "ramps the baseline family cannot catch."),
             ]),
         row("drop_v6", "nodeguard XDP drop rate v6", "FLOAT",
             "IPv6 drops per second", units="pps", rate=True,
@@ -210,6 +217,13 @@ def build_rows():
                      "(baselinedev explodes on near-zero baselines). "
                      "Imported at Information severity; promoted only "
                      "after 14 days of reviewed-quiet trend rows."),
+                trig("nodeguard v6 drop rate above static ceiling on "
+                     "{HOST.NAME}",
+                     "min(%s,5m)>5000" % iref(kv_key("drop_v6")),
+                     "INFO",
+                     "Placeholder ceiling; value retuned from phase 5 "
+                     "shadow data (tasks.md 5.4). Backstop for slow "
+                     "ramps the baseline family cannot catch."),
             ]),
         row("pass", "nodeguard XDP pass rate", "FLOAT",
             "default-pass packets per second", units="pps", rate=True),
@@ -356,11 +370,32 @@ def build_rows():
         ("frag_v6", "IPv6 fragment", "IPv6 packets carrying a fragment "
          "header"),
     ]
+    # Generous static rate floors for the sanity counters: the "static
+    # rate floors first" layer of design section 6; baselinedev variants
+    # only after a demonstrated quiet baseline. Values are deliberately
+    # generous placeholders, retuned from phase 5 shadow data.
+    stats2_floor = {
+        "tcp_synfin": 100, "tcp_synrst": 100, "tcp_null": 100,
+        "tcp_xmas": 100, "ttl_low": 1000, "frag_v4": 1000,
+        "frag_v6": 1000,
+    }
     for field, label, desc in stats2:
         rows.append(row(field, "nodeguard %s packets" % label, "UNSIGNED",
                         desc + " (cumulative)"))
-        rows.append(rate_twin(field, "nodeguard %s rate" % label,
-                              desc + " (per second)"))
+        rows.append(rate_twin(
+            field, "nodeguard %s rate" % label, desc + " (per second)",
+            triggers=[
+                trig("nodeguard %s rate above static floor on "
+                     "{HOST.NAME}" % label,
+                     "min(%s,5m)>%d" % (iref(kv_key(field + ".rate")),
+                                        stats2_floor[field]),
+                     "INFO",
+                     "Generous static rate floor, the sanity counters' "
+                     "first alerting layer per design section 6; "
+                     "placeholder value retuned from phase 5 shadow "
+                     "data (tasks.md 5.4). A baselinedev variant is "
+                     "added only after a demonstrated quiet baseline."),
+            ]))
 
     rows += [
         row("suricata_alerts", "suricata alerts", "UNSIGNED",
@@ -380,6 +415,15 @@ def build_rows():
                            "absolute floor. Imported at Information "
                            "severity; promoted only after 14 days of "
                            "reviewed-quiet trend rows."),
+                      trig("suricata alert rate above static ceiling on "
+                           "{HOST.NAME}",
+                           "min(%s,5m)>50"
+                           % iref(kv_key("suricata_alerts.rate")),
+                           "INFO",
+                           "Placeholder ceiling; value retuned from "
+                           "phase 5 shadow data (tasks.md 5.4). "
+                           "Backstop for slow ramps the baseline "
+                           "family cannot catch."),
                   ]),
         rate_twin("kernel_drops", "suricata kernel drop rate",
                   "capture-ring drops per second (rate twin of the "

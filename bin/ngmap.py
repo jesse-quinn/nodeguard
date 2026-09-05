@@ -315,6 +315,7 @@ def cmd_sweep(_a):
                 if cur_expiry and now >= cur_expiry:
                     if delete_key(path, k):
                         n += 1
+                        counts[ver] -= 1  # deleted this pass: not live
             finally:
                 lock.close()
     print(f"swept {n} expired entries")
@@ -329,7 +330,10 @@ def cmd_sweep(_a):
     deltas = {c: h - prev.get(c, 0) for c, h in hits_now.items()
               if h - prev.get(c, 0) > 0}
     top = sorted(deltas.items(), key=lambda kv: -kv[1])[:5]
-    top_txt = ",".join(f"{c}:{d}" for c, d in top) or "none"
+    # cidr:delta:cumulative, delta-ranked (who is hitting us NOW), with
+    # the lifetime figure carried as the secondary number per entry
+    top_txt = ",".join(f"{c}:{d}:{hits_now.get(c, d)}"
+                       for c, d in top) or "none"
     top1 = top[0][1] if top else 0
     caps = _spec_max_entries()
     walk_ms = int((time.monotonic() - walk_start) * 1000)

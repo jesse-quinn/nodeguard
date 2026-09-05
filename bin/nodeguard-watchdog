@@ -33,6 +33,7 @@ FLOOR = float(os.environ["WD_ANOM_FLOOR"])
 TRIP = int(os.environ["WD_ANOM_TRIP"])
 ADAPT = int(os.environ["WD_ANOM_ADAPT"])
 ALPHA = 0.05
+STALE_S = 150  # 2.5 cycles; kv ts and this clock are the same host clock
 
 kv = {}
 for ln in open(KV):
@@ -58,8 +59,13 @@ if all(v is not None for v in san):
 if num("ng.suricata_alerts") is not None:
     metrics["suricata_alerts"] = num("ng.suricata_alerts")
 
+# SAFETY: regime excludes prog_id; a reload or reboot discards one cycle
+# but keeps the trained baseline (only latch, attach, and feeds-enforce
+# flips are true regime changes that reseed it).
 regime = (kv.get("ng.killswitch"), kv.get("ng.attach_state"),
-          kv.get("ng.feeds_enforce"), kv.get("ng.prog_id"))
+          kv.get("ng.feeds_enforce"))
+prog_id = kv.get("ng.prog_id")
+kv_ts = num("ng.ts")
 
 try:
     st = json.load(open(STATE))
@@ -68,21 +74,42 @@ except Exception:
 counts = st.get("counts", {"anomaly_count": 0, "anomaly_shadow_count": 0,
                            "anomaly_last_ts": 0})
 
-def reseed(reason):
-    # SAFETY: regime changes (latch flip, attach change, feeds flip,
-    # reload) discard the cycle and reseed, so recovery or a planned
-    # change can never register as an anomaly.
-    json.dump({"regime": list(regime), "last": {m: v for m, v in metrics.items()},
-               "ewma": st.get("ewma", {}) if reason == "negative" else {},
-               "streak": 0, "consec": 0, "counts": counts}, open(STATE + ".tmp", "w"))
+def dump(last=None, ewma=None, consec=0):
+    json.dump({"regime": list(regime),
+               "prog_id": prog_id,
+               "kv_ts": kv_ts,
+               "last": last if last is not None else dict(metrics),
+               "ewma": ewma if ewma is not None else {},
+               "consec": consec, "counts": counts},
+              open(STATE + ".tmp", "w"))
     os.replace(STATE + ".tmp", STATE)
 
+def write_out():
+    with open(OUT + ".tmp", "w") as f:
+        f.write(f"ng.anomaly_count={counts['anomaly_count']}\n"
+                f"ng.anomaly_shadow_count={counts['anomaly_shadow_count']}\n"
+                f"ng.anomaly_last_ts={counts['anomaly_last_ts']}\n")
+    os.replace(OUT + ".tmp", OUT)
+
+# SAFETY: a stale or re-read kv snapshot must not register as real
+# zero-delta cycles (which would decay the baseline and false-trip on
+# recovery); the cycle is discarded without touching last or ewma.
+if kv_ts is None or kv_ts == st.get("kv_ts") \
+        or time.time() - kv_ts > STALE_S:
+    write_out()
+    raise SystemExit(0)
+
 if st.get("regime") != list(regime) or "last" not in st:
-    reseed("regime")
+    # true regime change: full reseed, baseline dropped by design
+    dump()
+elif st.get("prog_id") != prog_id:
+    # reload or reboot: discard exactly one cycle, keep the baseline
+    # (also absorbs the dual-attach ST_PASS double-count)
+    dump(ewma=st.get("ewma", {}), consec=0)
 else:
     ewma = st.get("ewma", {})
     consec = st.get("consec", 0)
-    streak = st.get("streak", 0)
+    deltas = {}
     anomalous = []
     negative = False
     for m, v in metrics.items():
@@ -93,32 +120,45 @@ else:
         if delta < 0:
             negative = True
             break
+        deltas[m] = delta
         e = ewma.get(m)
         if e is None:
-            ewma[m] = {"m": float(delta), "d": float(FLOOR)}
             continue
         thresh = max(FLOOR, e["m"] + K * e["d"])
         if delta > thresh:
             anomalous.append((m, delta, int(thresh)))
-            # SAFETY: an at-or-above-threshold cycle does not update the
-            # baseline, so the detector cannot be trained into silence
-            # by the event it measures; a bounded skip streak forces
-            # adaptation to legitimate level shifts.
-            if streak >= ADAPT:
-                dev = abs(delta - e["m"])
-                e["m"] += ALPHA * (delta - e["m"])
-                e["d"] += ALPHA * (dev - e["d"])
-        else:
+    if negative:
+        # counter reset the prog_id rule missed (map recreation):
+        # discard the cycle, keep the baseline
+        dump(ewma=st.get("ewma", {}), consec=0)
+    else:
+        # SAFETY: an anomalous cycle updates NO metric baseline (a
+        # correlated below-threshold metric must not be trained by the
+        # event either) until each metric's own bounded skip streak
+        # forces adaptation, after which a sustained shift absorbs.
+        any_anom = bool(anomalous)
+        for m, delta in deltas.items():
+            e = ewma.get(m)
+            if e is None:
+                if not any_anom:
+                    ewma[m] = {"m": float(delta), "d": float(FLOOR),
+                               "skip": 0}
+                continue
+            sk = e.get("skip", 0)
+            if any_anom and sk < ADAPT:
+                e["skip"] = sk + 1
+                continue
+            if any_anom:
+                e["skip"] = sk + 1  # never reset mid-episode: no oscillation
+            else:
+                e["skip"] = 0
             dev = abs(delta - e["m"])
             e["m"] += ALPHA * (delta - e["m"])
             e["d"] += ALPHA * (dev - e["d"])
-    if negative:
-        reseed("negative")
-    else:
-        if anomalous:
-            streak += 1
+        if any_anom:
             consec += 1
-            if consec >= TRIP:
+            # fire on the transition only: one trip per episode
+            if consec == TRIP:
                 which = ", ".join(f"{m} delta={d} thresh={t}"
                                   for m, d, t in anomalous)
                 if MODE == "on":
@@ -129,20 +169,11 @@ else:
                 print(f"watchdog: VOLUMETRIC ANOMALY ({MODE}): {which}; "
                       f"count={counts['anomaly_count']} "
                       f"shadow={counts['anomaly_shadow_count']}")
-                consec = 0
         else:
             consec = 0
-            streak = 0
-        json.dump({"regime": list(regime), "last": {m: v for m, v in metrics.items()},
-                   "ewma": ewma, "streak": streak, "consec": consec,
-                   "counts": counts}, open(STATE + ".tmp", "w"))
-        os.replace(STATE + ".tmp", STATE)
+        dump(ewma=ewma, consec=consec)
 
-with open(OUT + ".tmp", "w") as f:
-    f.write(f"ng.anomaly_count={counts['anomaly_count']}\n"
-            f"ng.anomaly_shadow_count={counts['anomaly_shadow_count']}\n"
-            f"ng.anomaly_last_ts={counts['anomaly_last_ts']}\n")
-os.replace(OUT + ".tmp", OUT)
+write_out()
 ANOMPY
 fi
 

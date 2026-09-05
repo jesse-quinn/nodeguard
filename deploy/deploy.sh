@@ -13,7 +13,16 @@ set -euo pipefail
 SSH="${1:?usage: deploy.sh <ssh-target> <host-config-dir> [--with-kernel]}"
 HOSTDIR="${2:?usage: deploy.sh <ssh-target> <host-config-dir> [--with-kernel]}"
 WITH_KERNEL=0
-[ "${3:-}" = "--with-kernel" ] && WITH_KERNEL=1
+for arg in "${@:3}"; do
+    case "$arg" in
+    --with-kernel) WITH_KERNEL=1 ;;
+    *)
+        echo "unknown argument: $arg" >&2
+        echo "usage: deploy.sh <ssh-target> <host-config-dir> [--with-kernel]" >&2
+        exit 2
+        ;;
+    esac
+done
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="$REPO/build/out"
 
@@ -69,9 +78,13 @@ S=/tmp/nodeguard-deploy
 
 install -d -m 0755 /usr/local/lib/nodeguard /etc/nodeguard /var/lib/nodeguard /var/lib/nodeguard/feeds
 if [ -f "$S/nodeguard_kern.o" ]; then
-    # keep the N-1 object for hitless rollback via nodeguard-reload
-    [ -f /usr/local/lib/nodeguard/nodeguard_kern.o ] && \
-        cp -p /usr/local/lib/nodeguard/nodeguard_kern.o /usr/local/lib/nodeguard/nodeguard_kern.o.prev
+    # keep the N-1 object for hitless rollback, but only rotate when the
+    # staged object actually differs: an idempotent re-run must never
+    # overwrite the rollback target with the object it rolls back FROM
+    cur=/usr/local/lib/nodeguard/nodeguard_kern.o
+    if [ -f "$cur" ] && ! cmp -s "$S/nodeguard_kern.o" "$cur"; then
+        cp -p "$cur" "$cur.prev"
+    fi
     install -m 0644 "$S/nodeguard_kern.o" "$S/nodeguard-maps.spec" /usr/local/lib/nodeguard/
 fi
 install -m 0755 "$S/ngmap.py" /usr/local/lib/nodeguard/
@@ -101,6 +114,12 @@ install -m 0644 "$S/suricata-50-limits.conf" \
 install -m 0644 "$S/tmpfiles-nodeguard.conf" /etc/tmpfiles.d/nodeguard.conf
 install -d /etc/zabbix_agentd.d
 install -m 0644 "$S/zabbix-userparameter-nodeguard.conf" /etc/zabbix_agentd.d/nodeguard.conf
+# NOTE: this fleet's agent reads /etc/zabbix_agentd.conf (Fedora ships no
+# include dir); deploy owns the Include line so the conf actually loads.
+if [ -f /etc/zabbix_agentd.conf ] && \
+        ! grep -q '^Include=/etc/zabbix_agentd.d/' /etc/zabbix_agentd.conf; then
+    echo 'Include=/etc/zabbix_agentd.d/*.conf' >> /etc/zabbix_agentd.conf
+fi
 # NOTE: agent restart is a deliberate runbook step, not automated here.
 systemd-tmpfiles --create /etc/tmpfiles.d/nodeguard.conf
 
@@ -121,7 +140,8 @@ echo "-- verification --"
 for f in /usr/local/sbin/nodeguard-maps /usr/local/sbin/nodeguard-attach \
          /usr/local/sbin/nodeguard-detach /usr/local/sbin/nodeguard-cli \
          /usr/local/sbin/nodeguard-status /usr/local/sbin/nodeguard-reload \
-         /usr/local/sbin/nodeguard-watchdog /usr/local/sbin/nodeguard-canary; do
+         /usr/local/sbin/nodeguard-watchdog /usr/local/sbin/nodeguard-canary \
+         /usr/local/lib/nodeguard/nodeguard-lib.sh; do
     bash -n "$f"
 done
 python3 -m py_compile /usr/local/lib/nodeguard/ngmap.py /usr/local/sbin/nodeguard-responder /usr/local/sbin/nodeguard-feeds
@@ -137,6 +157,8 @@ for u in nodeguard-maps.service nodeguard-xdp.service nodeguard-responder.servic
         verify_fail=1
     fi
 done
+grep -q '^UserParameter=nodeguard.kv.raw,' /etc/zabbix_agentd.d/nodeguard.conf \
+    || { echo "zabbix agent conf missing nodeguard.kv.raw"; verify_fail=1; }
 grep -q '/var/log/suricata/\*.json' /etc/logrotate.d/suricata || { echo "logrotate config missing eve.json coverage"; verify_fail=1; }
 grep -vE '^[[:space:]]*#' /etc/logrotate.d/suricata | grep -q copytruncate && { echo "logrotate config uses copytruncate (loses lines)"; verify_fail=1; }
 [ "$verify_fail" -eq 0 ] || { echo "deploy verification FAILED"; exit 4; }

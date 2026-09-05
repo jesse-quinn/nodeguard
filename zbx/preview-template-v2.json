@@ -310,6 +310,13 @@
         "expression": "baselinedev(/Nodeguard by Zabbix agent/nodeguard.kv[drop_v4],1h:now/h,\"d\",10)>3 and last(/Nodeguard by Zabbix agent/nodeguard.kv[drop_v4])>10",
         "priority": "INFO",
         "description": "Seasonal baseline deviation with an absolute floor (baselinedev explodes on near-zero baselines). Imported at Information severity; promoted only after 14 days of reviewed-quiet trend rows."
+       },
+       {
+        "uuid": "09394568a61a5281ac93f4df1d4f3da7",
+        "name": "nodeguard v4 drop rate above static ceiling on {HOST.NAME}",
+        "expression": "min(/Nodeguard by Zabbix agent/nodeguard.kv[drop_v4],5m)>5000",
+        "priority": "INFO",
+        "description": "Placeholder ceiling; value retuned from phase 5 shadow data (tasks.md 5.4). Backstop for slow ramps the baseline family cannot catch."
        }
       ]
      },
@@ -349,6 +356,13 @@
         "expression": "baselinedev(/Nodeguard by Zabbix agent/nodeguard.kv[drop_v6],1h:now/h,\"d\",10)>3 and last(/Nodeguard by Zabbix agent/nodeguard.kv[drop_v6])>10",
         "priority": "INFO",
         "description": "Seasonal baseline deviation with an absolute floor (baselinedev explodes on near-zero baselines). Imported at Information severity; promoted only after 14 days of reviewed-quiet trend rows."
+       },
+       {
+        "uuid": "d252f3c077cf5ee3ad4998d98eb722f4",
+        "name": "nodeguard v6 drop rate above static ceiling on {HOST.NAME}",
+        "expression": "min(/Nodeguard by Zabbix agent/nodeguard.kv[drop_v6],5m)>5000",
+        "priority": "INFO",
+        "description": "Placeholder ceiling; value retuned from phase 5 shadow data (tasks.md 5.4). Backstop for slow ramps the baseline family cannot catch."
        }
       ]
      },
@@ -1205,6 +1219,15 @@
          ""
         ]
        }
+      ],
+      "triggers": [
+       {
+        "uuid": "15d1e8f3a3375766860ed5c2fcb5c37b",
+        "name": "nodeguard TCP SYN+FIN rate above static floor on {HOST.NAME}",
+        "expression": "min(/Nodeguard by Zabbix agent/nodeguard.kv[tcp_synfin.rate],5m)>100",
+        "priority": "INFO",
+        "description": "Generous static rate floor, the sanity counters' first alerting layer per design section 6; placeholder value retuned from phase 5 shadow data (tasks.md 5.4). A baselinedev variant is added only after a demonstrated quiet baseline."
+       }
       ]
      },
      {
@@ -1257,6 +1280,15 @@
         "parameters": [
          ""
         ]
+       }
+      ],
+      "triggers": [
+       {
+        "uuid": "f30ef386442055149fc3b94b35477b72",
+        "name": "nodeguard TCP SYN+RST rate above static floor on {HOST.NAME}",
+        "expression": "min(/Nodeguard by Zabbix agent/nodeguard.kv[tcp_synrst.rate],5m)>100",
+        "priority": "INFO",
+        "description": "Generous static rate floor, the sanity counters' first alerting layer per design section 6; placeholder value retuned from phase 5 shadow data (tasks.md 5.4). A baselinedev variant is added only after a demonstrated quiet baseline."
        }
       ]
      },
@@ -1311,6 +1343,15 @@
          ""
         ]
        }
+      ],
+      "triggers": [
+       {
+        "uuid": "25be4b0913ff51deb824f3a8ba760d04",
+        "name": "nodeguard TCP NULL rate above static floor on {HOST.NAME}",
+        "expression": "min(/Nodeguard by Zabbix agent/nodeguard.kv[tcp_null.rate],5m)>100",
+        "priority": "INFO",
+        "description": "Generous static rate floor, the sanity counters' first alerting layer per design section 6; placeholder value retuned from phase 5 shadow data (tasks.md 5.4). A baselinedev variant is added only after a demonstrated quiet baseline."
+       }
       ]
      },
      {
@@ -1363,6 +1404,15 @@
         "parameters": [
          ""
         ]
+       }
+      ],
+      "triggers": [
+       {
+        "uuid": "bda826c15e7c587ca0d20629dd3b352c",
+        "name": "nodeguard TCP XMAS rate above static floor on {HOST.NAME}",
+        "expression": "min(/Nodeguard by Zabbix agent/nodeguard.kv[tcp_xmas.rate],5m)>100",
+        "priority": "INFO",
+        "description": "Generous static rate floor, the sanity counters' first alerting layer per design section 6; placeholder value retuned from phase 5 shadow data (tasks.md 5.4). A baselinedev variant is added only after a demonstrated quiet baseline."
        }
       ]
      },
@@ -1417,6 +1467,15 @@
          ""
         ]
        }
+      ],
+      "triggers": [
+       {
+        "uuid": "0a8e6853159f5211a94fa963abec013e",
+        "name": "nodeguard low TTL rate above static floor on {HOST.NAME}",
+        "expression": "min(/Nodeguard by Zabbix agent/nodeguard.kv[ttl_low.rate],5m)>1000",
+        "priority": "INFO",
+        "description": "Generous static rate floor, the sanity counters' first alerting layer per design section 6; placeholder value retuned from phase 5 shadow data (tasks.md 5.4). A baselinedev variant is added only after a demonstrated quiet baseline."
+       }
       ]
      },
      {
@@ -1470,6 +1529,15 @@
          ""
         ]
        }
+      ],
+      "triggers": [
+       {
+        "uuid": "6920206f8c14539a8ceb371120d3a9e3",
+        "name": "nodeguard IPv4 fragment rate above static floor on {HOST.NAME}",
+        "expression": "min(/Nodeguard by Zabbix agent/nodeguard.kv[frag_v4.rate],5m)>1000",
+        "priority": "INFO",
+        "description": "Generous static rate floor, the sanity counters' first alerting layer per design section 6; placeholder value retuned from phase 5 shadow data (tasks.md 5.4). A baselinedev variant is added only after a demonstrated quiet baseline."
+       }
       ]
      },
      {
@@ -1522,6 +1590,15 @@
         "parameters": [
          ""
         ]
+       }
+      ],
+      "triggers": [
+       {
+        "uuid": "e3881f5f7a5c5c68aab3b00cc4e100d1",
+        "name": "nodeguard IPv6 fragment rate above static floor on {HOST.NAME}",
+        "expression": "min(/Nodeguard by Zabbix agent/nodeguard.kv[frag_v6.rate],5m)>1000",
+        "priority": "INFO",
+        "description": "Generous static rate floor, the sanity counters' first alerting layer per design section 6; placeholder value retuned from phase 5 shadow data (tasks.md 5.4). A baselinedev variant is added only after a demonstrated quiet baseline."
        }
       ]
      },
@@ -1584,6 +1661,13 @@
         "expression": "baselinedev(/Nodeguard by Zabbix agent/nodeguard.kv[suricata_alerts.rate],1h:now/h,\"d\",10)>3 and last(/Nodeguard by Zabbix agent/nodeguard.kv[suricata_alerts.rate])>1",
         "priority": "INFO",
         "description": "Seasonal baseline deviation with a 1/s absolute floor. Imported at Information severity; promoted only after 14 days of reviewed-quiet trend rows."
+       },
+       {
+        "uuid": "1ad9977641865146b7a417bd551bc99c",
+        "name": "suricata alert rate above static ceiling on {HOST.NAME}",
+        "expression": "min(/Nodeguard by Zabbix agent/nodeguard.kv[suricata_alerts.rate],5m)>50",
+        "priority": "INFO",
+        "description": "Placeholder ceiling; value retuned from phase 5 shadow data (tasks.md 5.4). Backstop for slow ramps the baseline family cannot catch."
        }
       ]
      },

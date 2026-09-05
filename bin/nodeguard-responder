@@ -253,6 +253,7 @@ def follow(path):
             f = None
             continue
         time.sleep(0.5)
+        yield None  # idle sentinel: lets the caller flush pending state
 
 
 def main():
@@ -303,6 +304,9 @@ def main():
         f"{len(optin)} opt-in / {len(ignore)} ignored / {len(udp_ok)} udp-ok SIDs")
 
     for line in follow(conf["EVE"]):
+        if line is None:
+            flush_sec()
+            continue
         try:
             now = time.time()
             if now - last_prune > 86400:

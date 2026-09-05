@@ -9,7 +9,9 @@ Contract:
   the canonical fleet definition, resolved live at run time. Item value
   tiles and gauges are generated per resolved group member; svggraph and
   pie datasets address hosts by pattern (--host-pattern, repeatable; the
-  default is the resolved member names) and items by NAME pattern; the
+  default is the resolved members' VISIBLE names, because Zabbix matches
+  dataset host patterns against the visible name) and items by NAME
+  pattern; the
   honeycomb is group-addressed over the LLD per-feed item names. Adding a
   host costs one re-run, never a code edit.
 - The default run prints the full plan (widgets, resolved hosts, resolved
@@ -74,29 +76,33 @@ class Ctx:
         self.patterns = patterns              # host patterns for datasets
         self.explicit_patterns = explicit_patterns
         self.legend_url = legend_url
-        self.items_by_host = {}               # host -> {key: itemid}
+        self.items_by_host = {}               # hostid -> {key: itemid}
         self.warnings = []
-        self.resolved = []                    # (host, key, itemid)
-        self.unresolved = []                  # (host, key)
+        self.resolved = []                    # (visible name, key, itemid)
+        self.unresolved = []                  # (visible name, key)
         for h in hosts:
-            self.items_by_host[h["host"]] = lib.resolve_itemids(
+            self.items_by_host[h["hostid"]] = lib.resolve_itemids(
                 api, h["hostid"])
 
     def itemid(self, host, key):
-        iid = self.items_by_host.get(host, {}).get(key)
+        """host is a resolved host dict ({hostid, host, name}); lookup is
+        by hostid, reporting labels use the visible name."""
+        iid = self.items_by_host.get(host["hostid"], {}).get(key)
         if iid is None:
-            self.unresolved.append((host, key))
+            self.unresolved.append((host["name"], key))
             self.warnings.append(
                 "WARNING: item %s unresolved on host %s; widget skipped"
-                % (key, host))
+                % (key, host["name"]))
             return None
-        self.resolved.append((host, key, iid))
+        self.resolved.append((host["name"], key, iid))
         return iid
 
     def datasets(self, item_names, shift_base=0):
         """svggraph datasets per the scaling rules: explicit patterns get
         one dataset each with palette colors; the derived default gets
-        one dataset per member host with the stable host color."""
+        one dataset per member host with the stable host color. Zabbix
+        resolves dataset host patterns against the VISIBLE name, so the
+        derived default uses h["name"], never the technical h["host"]."""
         out = []
         if self.explicit_patterns:
             for i, pat in enumerate(self.patterns):
@@ -107,8 +113,8 @@ class Ctx:
         else:
             for h in self.hosts:
                 for j, iname in enumerate(item_names):
-                    out.append((h["host"], iname,
-                                lib.host_color(h["host"],
+                    out.append((h["name"], iname,
+                                lib.host_color(h["name"],
                                                shift_base + j)))
         return out
 
@@ -118,7 +124,8 @@ def kv(field):
 
 
 def tile_row(ctx, widgets, y, host, specs, height=3):
-    """One row of item value tiles for one host. specs is
+    """One row of item value tiles for one host (a resolved host dict;
+    itemid lookup by hostid, label by visible name). specs is
     [(width, label, kv_field), ...]; unresolvable tiles are skipped
     loudly and their slot left empty."""
     x = 0
@@ -126,7 +133,8 @@ def tile_row(ctx, widgets, y, host, specs, height=3):
         iid = ctx.itemid(host, kv(field))
         if iid is not None:
             widgets.append(lib.itemvalue(
-                x, y, width, height, "%s: %s" % (host, label), iid))
+                x, y, width, height, "%s: %s" % (host["name"], label),
+                iid))
         x += width
     return y + height
 
@@ -145,7 +153,7 @@ def build_overview(ctx):
              (12, "responder unit", "responder"),
              (12, "anomaly trips", "anomaly_count")]
     for h in ctx.hosts:
-        y = tile_row(ctx, widgets, y, h["host"], tiles)
+        y = tile_row(ctx, widgets, y, h, tiles)
     graphs = [
         ("XDP drop rate v4 and v6: pkts/s dropped in-driver from "
          "blocklisted sources (attacks stopped)",
@@ -177,8 +185,8 @@ def build_overview(ctx):
         colors = [lib.OKABE_ITO[j % len(lib.OKABE_ITO)]
                   for j in range(len(PASS_PATH_ITEMS))]
         widgets.append(lib.pie(x, y, w, 7,
-                               "%s: pass-path share" % h["host"],
-                               h["host"], PASS_PATH_ITEMS, colors, refs))
+                               "%s: pass-path share" % h["name"],
+                               h["name"], PASS_PATH_ITEMS, colors, refs))
     return widgets
 
 
@@ -215,7 +223,7 @@ def build_security(ctx):
              (12, "last responder action", "resp_last_action_ts"),
              (12, "watchdog canary failures", "wd_canary_fail")]
     for h in ctx.hosts:
-        y = tile_row(ctx, widgets, y, h["host"], tiles)
+        y = tile_row(ctx, widgets, y, h, tiles)
     return widgets
 
 
@@ -230,13 +238,13 @@ def build_capacity(ctx):
     for h in ctx.hosts:
         for field, label in (("util_v4_pct", "v4 map fill"),
                              ("util_v6_pct", "v6 map fill")):
-            gauges.append((h["host"], field, label))
+            gauges.append((h, field, label))
     for (host, field, label), (x, w) in zip(
             gauges, lib.split_columns(len(gauges))):
         iid = ctx.itemid(host, kv(field))
         if iid is not None:
             widgets.append(lib.gauge(
-                x, y, w, 5, "%s: %s" % (host, label), iid,
+                x, y, w, 5, "%s: %s" % (host["name"], label), iid,
                 thresholds=[("70", "E69F00"), ("85", "D55E00")]))
     y += 5
     widgets.append(lib.honeycomb(
@@ -268,7 +276,7 @@ def build_capacity(ctx):
              (10, "lifeline failures", "wd_lifeline_fail"),
              (12, "sweep age (s)", "sweep_age")]
     for h in ctx.hosts:
-        y = tile_row(ctx, widgets, y, h["host"], tiles)
+        y = tile_row(ctx, widgets, y, h, tiles)
     return widgets
 
 
@@ -283,9 +291,12 @@ def print_plan(ctx, plans):
     print("== plan (no API writes; use --confirm to apply) ==")
     print("resolved hosts (%d):" % len(ctx.hosts))
     for h in ctx.hosts:
-        print("  %s (hostid %s)" % (h["host"], h["hostid"]))
-    print("host patterns for graph datasets: %s"
-          % ", ".join(ctx.patterns))
+        # Both names printed so a technical-vs-visible divergence is
+        # visible in plan mode; dataset patterns match the visible name.
+        print("  %s (visible name %r, hostid %s)"
+              % (h["host"], h["name"], h["hostid"]))
+    print("host patterns for graph datasets (matched against visible "
+          "names): %s" % ", ".join(ctx.patterns))
     for name, widgets in plans:
         print("dashboard: %s (%d widgets)" % (name, len(widgets)))
         for w in widgets:
@@ -348,9 +359,10 @@ def main():
                     help="host group naming the fleet (default: %r)"
                          % DEFAULT_GROUP)
     ap.add_argument("--host-pattern", action="append", default=[],
-                    help="host pattern for svggraph and pie datasets; "
-                         "repeatable; default: the group's resolved "
-                         "member names")
+                    help="host pattern for svggraph and pie datasets "
+                         "(matched by Zabbix against the VISIBLE host "
+                         "name); repeatable; default: the group's "
+                         "resolved member visible names")
     ap.add_argument("--legend-url", default=DEFAULT_LEGEND,
                     help="base URL of the legend page (default: the "
                          "public GitHub Pages asset)")
@@ -375,7 +387,7 @@ def main():
             export_legacy(api, args.legacy_export)
         groupid, hosts = lib.resolve_group(api, args.group)
         ctx = Ctx(api, groupid, hosts,
-                  args.host_pattern or [h["host"] for h in hosts],
+                  args.host_pattern or [h["name"] for h in hosts],
                   bool(args.host_pattern), args.legend_url)
         plans = [(name, builder(ctx))
                  for short, name, builder in BUILDERS

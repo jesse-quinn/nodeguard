@@ -104,7 +104,7 @@ Layer 2, Zabbix seasonal (catches slow drifts and diurnal anomalies, costs the g
 
 ## 7. Zabbix template: master plus dependent, generated with uuid and name carry-over
 
-Agent side: a new UserParameter nodeguard.kv.raw (cat /run/zabbix/nodeguard.kv) joins the existing nodeguard.kv[*] passthrough (kept for zabbix_get spot checks and migration parity). Deployment owner, previously nonexistent: deploy.sh gains the agent conf as a staged/installed file (etc/zabbix-userparameter-nodeguard.conf into /etc/zabbix/zabbix_agentd.d/), matching its install-but-start-nothing philosophy; the zabbix-agent restart is a named pre-phase-2 runbook step, verified with `zabbix_get -k nodeguard.kv.raw` from the Zabbix server against BOTH hosts before the template import. Ordering is explicit in tasks.md: agent conf first, template second.
+Agent side: a new UserParameter nodeguard.kv.raw (cat /run/zabbix/nodeguard.kv) joins the existing nodeguard.kv[*] passthrough (kept for zabbix_get spot checks and migration parity). Deployment owner, previously nonexistent: deploy.sh gains the agent conf as a staged/installed file (etc/zabbix-userparameter-nodeguard.conf into /etc/zabbix_agentd.d/, installed as nodeguard.conf; this fleet's agent config is /etc/zabbix_agentd.conf, whose Include=/etc/zabbix_agentd.d/*.conf line the deploy ensures, since Fedora's zabbix packaging ships no include dir and the packaged /etc/zabbix/zabbix_agentd.d/ path named previously does not exist here), matching its install-but-start-nothing philosophy; the zabbix-agent restart is a named pre-phase-2 runbook step, verified with `zabbix_get -k nodeguard.kv.raw` from the Zabbix server against BOTH hosts before the template import. Ordering is explicit in tasks.md: agent conf first, template second.
 
 Master item: type Zabbix agent, key nodeguard.kv.raw, TEXT, delay 1m, history 1d (short retention aids torn-parse debugging), trends none. Every existing item KEEPS its key and flips to Dependent on the master. Preprocessing regex, specified exactly: `(?m)^ng\.<field>=(.+)$` -> \1. The inline multiline modifier is mandatory: Zabbix preprocessing is PCRE without a separate flags field, and without (?m) only the first kv line (ng.ts) would parse while roughly 60 dependents go unsupported. check_template.py runs every generated regex against a captured real nodeguard.kv file and asserts each templated field extracts a value.
 
@@ -240,4 +240,9 @@ override any per-host enumeration above:
   change.
 - The parity gate in section 8 includes a scale drill: run the generator
   plan with a synthetic third host in the group and verify the plan
-  output covers it in every dashboard with no code edit.
+  output covers it in every dashboard with no code edit. The synthetic
+  host MUST carry a visible name different from its technical name, and
+  the drill asserts the plan's dataset host patterns equal visible
+  names: Zabbix resolves svggraph and pie dataset host patterns against
+  the visible name, so a drill whose two names coincide cannot catch a
+  generator that emits technical names.
