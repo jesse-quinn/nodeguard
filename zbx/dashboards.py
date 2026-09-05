@@ -182,11 +182,9 @@ def build_overview(ctx):
     y += ((len(graphs) + 1) // 2) * 7
     for h, (x, w) in zip(ctx.hosts,
                          lib.split_columns(len(ctx.hosts))):
-        colors = [lib.OKABE_ITO[j % len(lib.OKABE_ITO)]
-                  for j in range(len(PASS_PATH_ITEMS))]
         widgets.append(lib.pie(x, y, w, 7,
                                "%s: pass-path share" % h["name"],
-                               h["name"], PASS_PATH_ITEMS, colors, refs))
+                               h["name"], PASS_PATH_ITEMS))
     return widgets
 
 

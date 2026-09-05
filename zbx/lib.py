@@ -197,7 +197,7 @@ def gauge(x, y, w, h, name, itemid, vmin=0, vmax=100, thresholds=()):
           _f(FIELD_STR, "max", vmax)]
     for i, (val, color) in enumerate(thresholds):
         fl += [_f(FIELD_STR, "thresholds.%d.color" % i, color),
-               _f(FIELD_STR, "thresholds.%d.threshold_value" % i, val)]
+               _f(FIELD_STR, "thresholds.%d.threshold" % i, val)]
     return widget("gauge", x, y, w, h, name, fl)
 
 
@@ -211,7 +211,7 @@ def svggraph(x, y, w, h, name, datasets, refseq, stacked=False,
     display-name contract, so a rename would empty the graph (guarded by
     check_template.py).
     """
-    fl = [_f(FIELD_STR, "reference", refseq.next())]
+    fl = [_f(FIELD_STR, "reference", next(refseq))]
     for i, (hosts, items, color) in enumerate(datasets):
         hosts = [hosts] if isinstance(hosts, str) else list(hosts)
         items = [items] if isinstance(items, str) else list(items)
@@ -226,15 +226,18 @@ def svggraph(x, y, w, h, name, datasets, refseq, stacked=False,
     return widget("svggraph", x, y, w, h, name, fl)
 
 
-def pie(x, y, w, h, name, host_pattern, item_patterns, colors, refseq):
+def pie(x, y, w, h, name, host_pattern, item_patterns):
     """Pie chart: one dataset of item name patterns on one host pattern.
-    The host pattern matches the Zabbix VISIBLE host name."""
-    fl = [_f(FIELD_STR, "reference", refseq.next()),
-          _f(FIELD_STR, "ds.0.hosts.0", host_pattern)]
+    The host pattern matches the Zabbix VISIBLE host name.
+    NOTE: field set verified against a hand-built 7.4 widget export
+    (2026-09-05): piechart takes NO reference field and NO per-item color
+    list; colors come from ds.N.color_palette (INT). Sending reference or
+    ds.N.color.N leaves the widget spinning forever and crashes its edit
+    dialog."""
+    fl = [_f(FIELD_STR, "ds.0.hosts.0", host_pattern),
+          _f(FIELD_INT, "ds.0.color_palette", 0)]
     for j, ip in enumerate(item_patterns):
         fl.append(_f(FIELD_STR, "ds.0.items.%d" % j, ip))
-    for j, color in enumerate(colors):
-        fl.append(_f(FIELD_STR, "ds.0.color.%d" % j, color))
     return widget("piechart", x, y, w, h, name, fl)
 
 

@@ -89,7 +89,7 @@ and any restart reloads it.
       or feeds-enforce change; discard cycles spanning a reload
       (prog_id change); never touches kill switch, latch files, or
       maps; tunables WD_ANOM_MODE/K/FLOOR/TRIP/ADAPT in nodeguard.env
-- [ ] 1.13 Open question (LPM used_entries): check on a live host
+- [x] 1.13 Open question (LPM used_entries): check on a live host
       whether bpftool reports a usable live entry count for LPM_TRIE
       maps; record the answer; the sweep-count derivation stands unless
       a cheaper accurate source exists
@@ -162,7 +162,7 @@ and any restart reloads it.
 - [ ] 2.8 Feeds writer visibility: emit per-feed snapshot_age only
       after a feed's first success, so pre-first-run items are visibly
       undiscovered or unsupported instead of green-zero
-- [ ] 2.9 Hard gate (pre-phase-2, open question): scratch-template
+- [x] 2.9 Hard gate (pre-phase-2, open question): scratch-template
       import rehearsal on the Zabbix server, v1 then v2; confirm
       itemids are preserved across the upgrade and one dependent item
       parses a pasted kv blob; Zabbix same-key/different-uuid import
@@ -277,7 +277,7 @@ and any restart reloads it.
       URL appears anywhere in zbx/; the private wrapper
       (dashboards-apply.sh, at most 15 lines) supplies url, group,
       host pattern, and token
-- [ ] 4.5 Open question (widget fields): verify the researched
+- [x] 4.5 Open question (widget fields): verify the researched
       honeycomb and gauge widget field names against the live 7.4 API
       with one plan-mode diff against a hand-exported dashboard before
       the first --confirm
