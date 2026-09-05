@@ -46,7 +46,7 @@
 
 ## 4. Phase 2: monitoring gate, maps, first attach
 
-- [ ] 4.1 Entry gate: create the monitoring items and triggers (attach
+- [x] 4.1 Entry gate: create the monitoring items and triggers (attach
       state, kill switch, stats advancing, unit states, IDS restart and
       drift items) before any attach
 - [x] 4.2 Enable the maps service; verify pins, reconciliation, and the
@@ -62,7 +62,7 @@
 - [x] 4.6 Attach on the remote node via the self-recovering canary wrapper;
       run its return-traffic drop test against its own pin set
 - [x] 4.7 Enable the sweep and watchdog timers
-- [ ] 4.8 Exit gate alarm drill: prove the kill-switch and attach-state
+- [x] 4.8 Exit gate alarm drill: prove the kill-switch and attach-state
       alarms fire on deliberate trips before any enforcement
 
 ## 5. Phase 3: responder dry-run
