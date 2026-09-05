@@ -61,6 +61,17 @@ fi
 if [ "$kv" -eq 1 ]; then
     echo "ng.ts=$(date +%s)"
     echo "ng.attached=$attached"
+    if [ -e "$NG_PIN/stats" ]; then
+        python3 "$NG_MAP" stats --json 2>/dev/null | python3 -c '
+import json, sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    d = {}
+for k in ("pass", "drop_v4", "drop_v6", "pass_allowlist", "pass_wgport"):
+    print(f"ng.{k}={d.get(k, 0)}")
+'
+    fi
     case "$attached" in
     0) echo "ng.attach_state=detached" ;;
     1) echo "ng.attach_state=attached" ;;

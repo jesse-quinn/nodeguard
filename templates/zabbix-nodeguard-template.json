@@ -159,6 +159,101 @@
         "description": "ring saturated; reduced detection coverage. Raise ring-size or trim the ruleset"
        }
       ]
+     },
+     {
+      "uuid": "437876d8f9574472a1a1516fbce12286",
+      "name": "nodeguard XDP drop rate v4",
+      "key": "nodeguard.kv[drop_v4]",
+      "delay": "1m",
+      "value_type": "FLOAT",
+      "units": "pps",
+      "description": "blocked packets per second (in-kernel drops of blocklisted sources)",
+      "history": "31d",
+      "trends": "180d",
+      "preprocessing": [
+       {
+        "type": "CHANGE_PER_SECOND",
+        "parameters": [
+         ""
+        ]
+       }
+      ]
+     },
+     {
+      "uuid": "0f5a088abe0a43d7b36d1db48dcfd787",
+      "name": "nodeguard XDP drop rate v6",
+      "key": "nodeguard.kv[drop_v6]",
+      "delay": "1m",
+      "value_type": "FLOAT",
+      "units": "pps",
+      "description": "IPv6 drops per second",
+      "history": "31d",
+      "trends": "180d",
+      "preprocessing": [
+       {
+        "type": "CHANGE_PER_SECOND",
+        "parameters": [
+         ""
+        ]
+       }
+      ]
+     },
+     {
+      "uuid": "b0f9fd5defee472d86c28f3a65c73b99",
+      "name": "nodeguard XDP pass rate",
+      "key": "nodeguard.kv[pass]",
+      "delay": "1m",
+      "value_type": "FLOAT",
+      "units": "pps",
+      "description": "default-pass packets per second",
+      "history": "31d",
+      "trends": "180d",
+      "preprocessing": [
+       {
+        "type": "CHANGE_PER_SECOND",
+        "parameters": [
+         ""
+        ]
+       }
+      ]
+     },
+     {
+      "uuid": "0e0e765f13a14f428ed92d9593c6c99c",
+      "name": "nodeguard allowlist pass rate",
+      "key": "nodeguard.kv[pass_allowlist]",
+      "delay": "1m",
+      "value_type": "FLOAT",
+      "units": "pps",
+      "description": "allowlist hits per second",
+      "history": "31d",
+      "trends": "180d",
+      "preprocessing": [
+       {
+        "type": "CHANGE_PER_SECOND",
+        "parameters": [
+         ""
+        ]
+       }
+      ]
+     },
+     {
+      "uuid": "507b60b7b0e74cd5a90e8660799c3829",
+      "name": "nodeguard WireGuard pass rate",
+      "key": "nodeguard.kv[pass_wgport]",
+      "delay": "1m",
+      "value_type": "FLOAT",
+      "units": "pps",
+      "description": "WireGuard port passes per second",
+      "history": "31d",
+      "trends": "180d",
+      "preprocessing": [
+       {
+        "type": "CHANGE_PER_SECOND",
+        "parameters": [
+         ""
+        ]
+       }
+      ]
      }
     ]
    }
