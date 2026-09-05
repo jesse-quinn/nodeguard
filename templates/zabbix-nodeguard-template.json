@@ -1,0 +1,160 @@
+{
+ "zabbix_export": {
+  "version": "7.4",
+  "template_groups": [
+   {
+    "uuid": "172269568760415a96aa3606c64ebd41",
+    "name": "Templates/Nodeguard"
+   }
+  ],
+  "templates": [
+   {
+    "uuid": "1d24a75919ad49d2ae4a70c70b90442d",
+    "template": "Nodeguard by Zabbix agent",
+    "name": "Nodeguard by Zabbix agent",
+    "description": "nodeguard XDP firewall + Suricata IPS monitoring. Requires the nodeguard.kv UserParameter and sudoers rule from the nodeguard repo (etc/).",
+    "groups": [
+     {
+      "name": "Templates/Nodeguard"
+     }
+    ],
+    "items": [
+     {
+      "uuid": "27fc0f9ce89b47bfbc7c2cd93a00481a",
+      "name": "nodeguard attach state",
+      "key": "nodeguard.kv[attach_state]",
+      "delay": "1m",
+      "value_type": "TEXT",
+      "description": "attached, detached, or unknown (xdp-loader itself failed; the program may still be enforcing)",
+      "history": "31d",
+      "trends": "0",
+      "triggers": [
+       {
+        "uuid": "dc15558415c94ea2a6814fe34f79bd2e",
+        "name": "nodeguard XDP is not attached on {HOST.NAME}",
+        "expression": "last(/Nodeguard by Zabbix agent/nodeguard.kv[attach_state])<>\"attached\"",
+        "priority": "WARNING",
+        "description": "detached = fail open (no enforcement); unknown = xdp-loader broken, state unverifiable"
+       }
+      ]
+     },
+     {
+      "uuid": "b0ad7e3ea47d4bf78e18e89e7b59a90f",
+      "name": "nodeguard kill switch",
+      "key": "nodeguard.kv[killswitch]",
+      "delay": "1m",
+      "value_type": "UNSIGNED",
+      "description": "nonzero = enforcement soft-off (latched)",
+      "history": "31d",
+      "trends": "180d",
+      "triggers": [
+       {
+        "uuid": "baa727885282476a9d2a73dbed541e03",
+        "name": "nodeguard enforcement latched OFF on {HOST.NAME}",
+        "expression": "last(/Nodeguard by Zabbix agent/nodeguard.kv[killswitch])=1",
+        "priority": "HIGH",
+        "description": "nodeguard-on to re-arm after diagnosing; check ng.latch for manual vs watchdog"
+       }
+      ]
+     },
+     {
+      "uuid": "35584dd9e3254dcc9b269009dba2698e",
+      "name": "nodeguard latch owner",
+      "key": "nodeguard.kv[latch]",
+      "delay": "1m",
+      "value_type": "TEXT",
+      "description": "manual, watchdog, or none",
+      "history": "31d",
+      "trends": "0"
+     },
+     {
+      "uuid": "0b2ff396a09741ca873c4ea28c8aa083",
+      "name": "nodeguard active blocks",
+      "key": "nodeguard.kv[blocks]",
+      "delay": "1m",
+      "value_type": "UNSIGNED",
+      "description": "entries in the block maps",
+      "history": "31d",
+      "trends": "180d"
+     },
+     {
+      "uuid": "dea9962cfa254d6fb4a08717ae7ea3b0",
+      "name": "nodeguard wg port match",
+      "key": "nodeguard.kv[port_match]",
+      "delay": "1m",
+      "value_type": "UNSIGNED",
+      "description": "1 = config[0] equals tailscaled's live port",
+      "history": "31d",
+      "trends": "180d",
+      "triggers": [
+       {
+        "uuid": "7b1751b50ea8485cb8722381cc9688b8",
+        "name": "nodeguard WireGuard port drift on {HOST.NAME}",
+        "expression": "last(/Nodeguard by Zabbix agent/nodeguard.kv[port_match])=0",
+        "priority": "WARNING",
+        "description": "watchdog rewrites within a minute; persistent drift means the watchdog timer is dead"
+       }
+      ]
+     },
+     {
+      "uuid": "83cc11dc212042a4938ea93689601598",
+      "name": "suricata unit state",
+      "key": "nodeguard.kv[suricata]",
+      "delay": "1m",
+      "value_type": "TEXT",
+      "description": "systemd is-active for suricata",
+      "history": "31d",
+      "trends": "0",
+      "triggers": [
+       {
+        "uuid": "f744a031051b45a1946d44d907d21442",
+        "name": "suricata is not active on {HOST.NAME}",
+        "expression": "last(/Nodeguard by Zabbix agent/nodeguard.kv[suricata])<>\"active\"",
+        "priority": "WARNING",
+        "description": "detection blind while down; zero traffic impact by design"
+       }
+      ]
+     },
+     {
+      "uuid": "3d5b807b589e4e0da238694cba2dacae",
+      "name": "nodeguard responder unit state",
+      "key": "nodeguard.kv[responder]",
+      "delay": "1m",
+      "value_type": "TEXT",
+      "description": "systemd is-active for nodeguard-responder",
+      "history": "31d",
+      "trends": "0",
+      "triggers": [
+       {
+        "uuid": "736dc0325b7c4a6e9ee94450fd075e25",
+        "name": "nodeguard responder is not active on {HOST.NAME}",
+        "expression": "last(/Nodeguard by Zabbix agent/nodeguard.kv[responder])<>\"active\"",
+        "priority": "WARNING",
+        "description": "no NEW blocks while down; existing blocks expire in-kernel"
+       }
+      ]
+     },
+     {
+      "uuid": "10ca8fa20c3a4842b916aa3a0a15c235",
+      "name": "suricata kernel drops",
+      "key": "nodeguard.kv[kernel_drops]",
+      "delay": "1m",
+      "value_type": "UNSIGNED",
+      "description": "cumulative af-packet kernel_drops across capture threads",
+      "history": "31d",
+      "trends": "180d",
+      "triggers": [
+       {
+        "uuid": "96de099ed5554770b8248aab8852cda2",
+        "name": "suricata capture is dropping packets on {HOST.NAME}",
+        "expression": "last(/Nodeguard by Zabbix agent/nodeguard.kv[kernel_drops])-last(/Nodeguard by Zabbix agent/nodeguard.kv[kernel_drops],#5)>50000",
+        "priority": "WARNING",
+        "description": "ring saturated; reduced detection coverage. Raise ring-size or trim the ruleset"
+       }
+      ]
+     }
+    ]
+   }
+  ]
+ }
+}
