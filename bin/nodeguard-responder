@@ -1,0 +1,281 @@
+#!/usr/bin/env python3
+"""nodeguard-responder: the Suricata-to-XDP IPS wiring.
+
+Tails eve.json and, for alerts that pass EVERY gate below, inserts the
+offender source address into the pinned block map via nodeguard-block:
+
+  1. event_type == alert
+  2. severity 1, or SID opted in via sids.conf ("block <sid>")
+  3. SID not denied ("ignore <sid>")
+  4. anti-spoofing: proto TCP with flow.pkts_toclient >= 1 and
+     flow.pkts_toserver >= 2; UDP/ICMP only for SIDs promoted by hand
+     ("udp-ok <sid>") with a written justification in sids.conf
+  5. inbound: dest_ip in HOME_NETS, src_ip globally routable
+  6. src not covered by the live allow maps or the never-block ranges
+  7. rate caps not exceeded (30/min, 500/hour by default)
+
+ENFORCE=no (the mandatory first-run mode) logs WOULD BLOCK and touches
+nothing. Stdlib only; stdout goes to journald.
+"""
+
+import collections
+import ipaddress
+import json
+import os
+import subprocess
+import sys
+import time
+
+CONF = "/etc/nodeguard/responder.conf"
+NGMAP = "/usr/local/lib/nodeguard/ngmap.py"
+BLOCK = "/usr/local/sbin/nodeguard-block"
+
+
+def log(msg):
+    print(msg, flush=True)
+
+
+def load_conf():
+    conf = {
+        "ENFORCE": "no",
+        "EVE": "/var/log/suricata/eve.json",
+        "JOURNAL": "/var/lib/nodeguard/blocks.json",
+        "SIDS": "/etc/nodeguard/sids.conf",
+        "TTL": "3600",
+        "TTL_MAX": "86400",
+        "RATE_MIN": "30",
+        "RATE_HOUR": "500",
+        "HOME_NETS": "",
+    }
+    try:
+        with open(CONF) as f:
+            for line in f:
+                line = line.split("#", 1)[0].strip()
+                if "=" in line:
+                    k, v = line.split("=", 1)
+                    conf[k.strip()] = v.strip()
+    except FileNotFoundError:
+        log(f"responder: {CONF} missing, using defaults (ENFORCE=no)")
+    conf["HOME_NETS"] = [ipaddress.ip_network(n.strip())
+                         for n in conf["HOME_NETS"].split(",") if n.strip()]
+    if not conf["HOME_NETS"]:
+        log("responder: FATAL: HOME_NETS is empty in responder.conf")
+        sys.exit(2)
+    return conf
+
+
+def load_sids(path):
+    optin, ignore, udp_ok = set(), set(), set()
+    try:
+        with open(path) as f:
+            for line in f:
+                line = line.split("#", 1)[0].strip()
+                if not line:
+                    continue
+                parts = line.split()
+                if len(parts) != 2 or not parts[1].isdigit():
+                    log(f"responder: sids.conf: skipping malformed line: {line}")
+                    continue
+                kind, sid = parts[0], int(parts[1])
+                if kind == "block":
+                    optin.add(sid)
+                elif kind == "ignore":
+                    ignore.add(sid)
+                elif kind == "udp-ok":
+                    udp_ok.add(sid)
+                else:
+                    log(f"responder: sids.conf: unknown directive {kind}")
+    except FileNotFoundError:
+        pass
+    return optin, ignore, udp_ok
+
+
+def allow_check(ip):
+    """True if the address is protected (never blockable)."""
+    r = subprocess.run(["python3", NGMAP, "allow-check", ip],
+                       capture_output=True, text=True)
+    return r.returncode == 0
+
+
+class Journal:
+    def __init__(self, path):
+        self.path = path
+        self.data = {}
+        try:
+            with open(path) as f:
+                self.data = json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            self.data = {}
+        self.prune()
+
+    def prune(self):
+        cutoff = time.time() - 30 * 86400
+        self.data = {ip: rec for ip, rec in self.data.items()
+                     if rec.get("last_seen", 0) >= cutoff}
+        self.save()
+
+    def save(self):
+        tmp = self.path + ".tmp"
+        os.makedirs(os.path.dirname(self.path), exist_ok=True)
+        with open(tmp, "w") as f:
+            json.dump(self.data, f)
+        os.replace(tmp, self.path)
+
+    def record(self, ip, sid):
+        rec = self.data.setdefault(ip, {"count": 0, "first_seen": time.time()})
+        rec["count"] += 1
+        rec["last_seen"] = time.time()
+        rec["sid"] = sid
+        self.save()
+        return rec["count"]
+
+
+def follow(path):
+    """tail -F: follow the file across rotation; start at the end."""
+    f = None
+    inode = None
+    while True:
+        if f is None:
+            try:
+                f = open(path)
+                st = os.fstat(f.fileno())
+                inode = st.st_ino
+                f.seek(0, os.SEEK_END)
+                log(f"responder: following {path} (inode {inode})")
+            except FileNotFoundError:
+                time.sleep(2)
+                continue
+        line = f.readline()
+        if line:
+            yield line
+            continue
+        try:
+            st = os.stat(path)
+            if st.st_ino != inode or st.st_size < f.tell():
+                f.close()
+                f = None  # rotated or truncated; reopen (from start of new file)
+                continue
+        except FileNotFoundError:
+            f.close()
+            f = None
+            continue
+        time.sleep(0.5)
+
+
+def main():
+    conf = load_conf()
+    enforce = conf["ENFORCE"].lower() == "yes"
+    ttl_base = int(conf["TTL"])
+    ttl_max = int(conf["TTL_MAX"])
+    rate_min_cap = int(conf["RATE_MIN"])
+    rate_hour_cap = int(conf["RATE_HOUR"])
+    optin, ignore, udp_ok = load_sids(conf["SIDS"])
+    sids_mtime = 0
+    try:
+        sids_mtime = os.stat(conf["SIDS"]).st_mtime
+    except FileNotFoundError:
+        pass
+    journal = Journal(conf["JOURNAL"])
+    minute = collections.deque()
+    hour = collections.deque()
+    last_prune = time.time()
+    capped = False
+
+    log(f"responder: started, ENFORCE={'yes' if enforce else 'no'}, "
+        f"{len(optin)} opt-in / {len(ignore)} ignored / {len(udp_ok)} udp-ok SIDs")
+
+    for line in follow(conf["EVE"]):
+        now = time.time()
+        if now - last_prune > 86400:
+            journal.prune()
+            last_prune = now
+        try:
+            mt = os.stat(conf["SIDS"]).st_mtime
+            if mt != sids_mtime:
+                optin, ignore, udp_ok = load_sids(conf["SIDS"])
+                sids_mtime = mt
+                log(f"responder: sids.conf reloaded "
+                    f"({len(optin)}/{len(ignore)}/{len(udp_ok)})")
+        except FileNotFoundError:
+            pass
+
+        try:
+            ev = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if ev.get("event_type") != "alert":
+            continue
+        alert = ev.get("alert", {})
+        sid = alert.get("signature_id", 0)
+        sev = alert.get("severity", 255)
+        sig = alert.get("signature", "?")
+        src = ev.get("src_ip", "")
+        dst = ev.get("dest_ip", "")
+        proto = ev.get("proto", "").upper()
+        flow = ev.get("flow", {})
+
+        if sid in ignore:
+            continue
+        if sev != 1 and sid not in optin:
+            continue
+
+        tag = f"sid={sid} sev={sev} src={src} dst={dst} proto={proto} sig={sig!r}"
+
+        # anti-spoofing gate
+        if proto != "TCP" and sid not in udp_ok:
+            log(f"WOULD BLOCK ({proto.lower() or 'unknown'}, not eligible): {tag}")
+            continue
+        if proto == "TCP":
+            if flow.get("pkts_toclient", 0) < 1 or flow.get("pkts_toserver", 0) < 2:
+                log(f"WOULD BLOCK (no bidirectional flow evidence): {tag}")
+                continue
+
+        # direction and address class
+        try:
+            src_ip = ipaddress.ip_address(src)
+            dst_ip = ipaddress.ip_address(dst)
+        except ValueError:
+            continue
+        if not any(dst_ip in n for n in conf["HOME_NETS"] if n.version == dst_ip.version):
+            continue  # not inbound
+        if not src_ip.is_global:
+            continue
+
+        if allow_check(src):
+            log(f"skip (allowlisted/protected): {tag}")
+            continue
+
+        # rate caps
+        while minute and minute[0] < now - 60:
+            minute.popleft()
+        while hour and hour[0] < now - 3600:
+            hour.popleft()
+        if len(minute) >= rate_min_cap or len(hour) >= rate_hour_cap:
+            if not capped:
+                log(f"RATE CAP hit ({len(minute)}/min, {len(hour)}/h); "
+                    f"suppressing new blocks: {tag}")
+                capped = True
+            continue
+        capped = False
+
+        count = journal.record(src, sid)
+        ttl = min(ttl_base * (2 ** (count - 1)), ttl_max)
+
+        if not enforce:
+            log(f"WOULD BLOCK: {tag} ttl={ttl} offense={count}")
+            continue
+
+        r = subprocess.run([BLOCK, src, str(ttl)], capture_output=True, text=True)
+        if r.returncode == 0:
+            minute.append(now)
+            hour.append(now)
+            log(f"BLOCKED: {tag} ttl={ttl} offense={count}")
+        else:
+            log(f"block FAILED ({r.stderr.strip()}): {tag}")
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except KeyboardInterrupt:
+        pass

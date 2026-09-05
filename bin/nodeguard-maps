@@ -1,0 +1,99 @@
+#!/bin/bash
+# nodeguard-maps: create/verify pinned maps, reconcile the allowlist, and
+# set the live WireGuard port. ExecStart of nodeguard-maps.service.
+set -uo pipefail
+. /usr/local/lib/nodeguard/nodeguard-lib.sh
+ng_env
+
+mkdir -p "$NG_RUN"
+
+# 1. Create missing maps / verify existing ones against the build-generated
+#    spec. A mismatch fails here, loudly, with recovery instructions.
+python3 "$NG_MAP" create-maps --spec "$NG_SPEC" || exit 2
+
+# 2. Build the generated protected-remotes file from protected.conf.
+GEN="$NG_RUN/allow-generated.txt"
+: > "$GEN"
+
+if [ -f /etc/nodeguard/protected.conf ]; then
+    while read -r directive arg _; do
+        case "$directive" in
+        ''|'#'*) ;;
+        cidr)
+            echo "$arg" >> "$GEN"
+            ;;
+        resolve)
+            # Best effort snapshot of current A/AAAA records (the fleet
+            # resolver is Quad9). Failure is logged, never fatal.
+            python3 - "$arg" >> "$GEN" 2>/dev/null <<'PYEOF' || ng_log "protected.conf: resolve failed for $arg" warning
+import socket, sys
+seen = set()
+for fam, _t, _p, _c, sa in socket.getaddrinfo(sys.argv[1], None):
+    ip = sa[0]
+    if ip not in seen:
+        seen.add(ip)
+        print(f"{ip}/32" if fam == socket.AF_INET else f"{ip}/128")
+PYEOF
+            ;;
+        derp)
+            derpjson="$NG_RUN/derp-map.json"
+            if tailscale debug derp-map > "$derpjson" 2>/dev/null; then
+                python3 - "$derpjson" >> "$GEN" <<'PYEOF' || ng_log "protected.conf: derp-map parse failed" warning
+import json, sys
+with open(sys.argv[1]) as f:
+    data = json.load(f)
+seen = set()
+for region in data.get("Regions", {}).values():
+    for node in region.get("Nodes") or []:
+        for key, suffix in (("IPv4", "/32"), ("IPv6", "/128")):
+            ip = node.get(key)
+            if ip and not ip.startswith("none") and ip not in seen:
+                seen.add(ip)
+                print(ip + suffix)
+PYEOF
+            else
+                ng_log "protected.conf: derp-map fetch failed" warning
+            fi
+            ;;
+        *)
+            ng_log "protected.conf: unknown directive '$directive'" warning
+            ;;
+        esac
+    done < /etc/nodeguard/protected.conf
+fi
+
+# 3. Host-specific dynamic WAN entries (node-2: default gateway, DHCP server,
+#    own WAN address, each as /32 read live so a renumber cannot rot them).
+if [ "${WAN_DYNAMIC_ALLOW:-no}" = "yes" ]; then
+    gw=$(ip -4 route show default dev "$IFACE" 2>/dev/null | awk '{print $3; exit}')
+    [ -n "$gw" ] && echo "$gw/32" >> "$GEN"
+    lease=$(grep -hs '^SERVER_ADDRESS=' /var/lib/NetworkManager/*"$IFACE".lease 2>/dev/null | head -1 | cut -d= -f2)
+    [ -n "$lease" ] && echo "$lease/32" >> "$GEN"
+    own=$(ip -4 -br addr show "$IFACE" 2>/dev/null | awk '{print $3}' | cut -d/ -f1)
+    [ -n "$own" ] && echo "$own/32" >> "$GEN"
+    if [ -z "$gw" ] || [ -z "$own" ]; then
+        ng_log "WAN dynamic allow: gw='$gw' own='$own' (missing entries)" warning
+    fi
+fi
+
+# 4. Reconcile allow maps to static files + generated entries. Refuses to
+#    proceed if the canary target appears in any allow source.
+python3 "$NG_MAP" reconcile-allow \
+    --static /etc/nodeguard/allow4.txt /etc/nodeguard/allow6.txt \
+    --generated "$GEN" \
+    --canary "${CANARY_IP:?CANARY_IP not set}" || exit 2
+
+# 5. Live WireGuard port into config[0]. Primary source is the socket
+#    tailscaled actually bound; last resort is the tailscale default.
+port=$(ng_live_wg_port)
+src=ss
+if [ -z "$port" ]; then
+    port=41641
+    src=default
+fi
+ng_cfg_set 0 "$port"
+ng_log "config[0] wg port = $port (source: $src)"
+
+# config[1] (kill switch) is deliberately NOT touched here for an existing
+# map; ngmap.py create-maps initializes it to 0 only on first creation.
+exit 0

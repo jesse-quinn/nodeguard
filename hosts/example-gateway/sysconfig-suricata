@@ -1,0 +1,2 @@
+# OPTIONS replaces the shipped "-i eth0 --user suricata" default.
+OPTIONS="--af-packet --user suricata"

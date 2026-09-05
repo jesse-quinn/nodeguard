@@ -1,0 +1,59 @@
+#!/bin/bash
+# nodeguard-attach: load nodeguard into the libxdp dispatcher on $IFACE in
+# native mode, then verify the attached program uses the pinned maps.
+# ExecStart of nodeguard-xdp.service. Fails loudly; never falls back to skb.
+set -uo pipefail
+. /usr/local/lib/nodeguard/nodeguard-lib.sh
+ng_env
+mkdir -p "$NG_RUN"
+
+existing=$(ng_prog_ids | head -1)
+if [ -n "$existing" ]; then
+    ng_log "nodeguard already attached on $IFACE (prog id $existing)" warning
+    echo "$existing" > "$NG_RUN/prog_id"
+    exit 0
+fi
+
+if ! xdp-loader load -m native -p "$NG_PIN" "$IFACE" "$NG_OBJ"; then
+    ng_log "native XDP attach FAILED on $IFACE; host runs OPEN (no fallback by design)" crit
+    exit 1
+fi
+
+prog_id=$(ng_prog_ids | head -1)
+if [ -z "$prog_id" ]; then
+    ng_log "attach reported success but nodeguard not in dispatcher on $IFACE" crit
+    exit 1
+fi
+
+# Map identity check: every pinned map id must appear in the attached
+# program's map_ids. A divergence means the program is enforcing against
+# maps nobody manages: unload and fail.
+prog_maps=$(bpftool prog show id "$prog_id" -j | python3 -c \
+    'import json,sys; print(" ".join(str(i) for i in json.load(sys.stdin).get("map_ids", [])))')
+ok=1
+for m in allow4 allow6 block4 block6 config stats; do
+    pinned_id=$(bpftool map show pinned "$NG_PIN/$m" -j 2>/dev/null | python3 -c \
+        'import json,sys; print(json.load(sys.stdin)["id"])' 2>/dev/null)
+    if [ -z "$pinned_id" ]; then
+        ng_log "map identity: $m has no pin under $NG_PIN" crit
+        ok=0
+        continue
+    fi
+    case " $prog_maps " in
+    *" $pinned_id "*) ;;
+    *)
+        ng_log "map identity: attached prog $prog_id does not use pinned $m (id $pinned_id)" crit
+        ok=0
+        ;;
+    esac
+done
+
+if [ "$ok" -ne 1 ]; then
+    xdp-loader unload "$IFACE" -i "$prog_id"
+    ng_log "map identity check failed; nodeguard unloaded, host runs OPEN" crit
+    exit 1
+fi
+
+echo "$prog_id" > "$NG_RUN/prog_id"
+ng_log "nodeguard attached on $IFACE, prog id $prog_id, map identity verified"
+exit 0

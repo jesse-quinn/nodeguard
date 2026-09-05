@@ -1,0 +1,99 @@
+#!/bin/bash
+# nodeguard-status: the 2am command. Human output by default; --kv emits
+# key=value pairs for zabbix UserParameters.
+set -uo pipefail
+. /usr/local/lib/nodeguard/nodeguard-lib.sh
+ng_env
+
+kv=0
+[ "${1:-}" = "--kv" ] && kv=1
+
+attached=0
+prog_id=""
+if prog_id=$(ng_prog_ids | head -1) && [ -n "$prog_id" ]; then
+    attached=1
+fi
+
+ks="unpinned"
+port_cfg=""
+blocks=""
+if [ -e "$NG_PIN/config" ]; then
+    ks=$(ng_cfg_get 1 2>/dev/null || echo "error")
+    port_cfg=$(ng_cfg_get 0 2>/dev/null || echo "error")
+    blocks=$(python3 "$NG_MAP" list --json 2>/dev/null | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))' || echo "error")
+fi
+port_live=$(ng_live_wg_port)
+port_match=0
+[ -n "$port_cfg" ] && [ "$port_cfg" = "$port_live" ] && port_match=1
+
+latch="none"
+[ -f "$NG_RUN/watchdog_off" ] && latch="watchdog"
+[ -f "$NG_RUN/manual_off" ] && latch="manual"
+
+sur_active=$(systemctl is-active suricata 2>/dev/null || true)
+resp_active=$(systemctl is-active nodeguard-responder 2>/dev/null || true)
+xdp_active=$(systemctl is-active nodeguard-xdp 2>/dev/null || true)
+maps_active=$(systemctl is-active nodeguard-maps 2>/dev/null || true)
+wd_timer=$(systemctl is-active nodeguard-watchdog.timer 2>/dev/null || true)
+sw_timer=$(systemctl is-active nodeguard-sweep.timer 2>/dev/null || true)
+
+kdrops=""
+if [ "$sur_active" = "active" ]; then
+    kdrops=$(suricatasc -c dump-counters 2>/dev/null | python3 -c '
+import json, sys
+try:
+    d = json.load(sys.stdin)["message"]
+    total = 0
+    for tname, tvals in d.items():
+        cap = tvals.get("capture") if isinstance(tvals, dict) else None
+        if isinstance(cap, dict):
+            total += cap.get("kernel_drops", 0)
+    print(total)
+except Exception:
+    print("")
+' || true)
+fi
+
+if [ "$kv" -eq 1 ]; then
+    echo "ng.attached=$attached"
+    echo "ng.prog_id=${prog_id:-0}"
+    echo "ng.killswitch=${ks}"
+    echo "ng.latch=$latch"
+    echo "ng.blocks=${blocks:-0}"
+    echo "ng.port_cfg=${port_cfg:-0}"
+    echo "ng.port_live=${port_live:-0}"
+    echo "ng.port_match=$port_match"
+    echo "ng.suricata=$sur_active"
+    echo "ng.responder=$resp_active"
+    echo "ng.xdp_unit=$xdp_active"
+    echo "ng.maps_unit=$maps_active"
+    echo "ng.watchdog_timer=$wd_timer"
+    echo "ng.sweep_timer=$sw_timer"
+    echo "ng.kernel_drops=${kdrops:-0}"
+    exit 0
+fi
+
+echo "== nodeguard status: $(hostname) ($IFACE) =="
+if [ "$attached" -eq 1 ]; then
+    echo "XDP:        ATTACHED (prog id $prog_id, native, dispatcher)"
+else
+    echo "XDP:        NOT ATTACHED (datapath pristine)"
+fi
+case "$ks" in
+0) echo "Enforce:    ON (kill switch clear)" ;;
+unpinned) echo "Enforce:    maps not pinned (nodeguard-maps not run)" ;;
+*) echo "Enforce:    OFF (kill switch=$ks, latched by: $latch)" ;;
+esac
+echo "WG port:    config=$port_cfg live=$port_live match=$port_match"
+echo "Blocks:     ${blocks:-n/a} active entries"
+if [ -e "$NG_PIN/stats" ]; then
+    echo "Counters:"
+    python3 "$NG_MAP" stats | sed 's/^/  /'
+fi
+echo "Units:      suricata=$sur_active responder=$resp_active xdp=$xdp_active maps=$maps_active"
+echo "Timers:     watchdog=$wd_timer sweep=$sw_timer"
+[ -n "$kdrops" ] && echo "Suricata:   kernel_drops=$kdrops"
+if [ "$attached" -eq 1 ]; then
+    echo "-- dispatcher --"
+    xdp-loader status "$IFACE" | sed 's/^/  /'
+fi

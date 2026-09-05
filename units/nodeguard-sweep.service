@@ -1,0 +1,6 @@
+[Unit]
+Description=nodeguard expired-block garbage collection
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /usr/local/lib/nodeguard/ngmap.py sweep

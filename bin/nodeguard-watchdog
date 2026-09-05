@@ -1,0 +1,137 @@
+#!/bin/bash
+# nodeguard-watchdog: one cycle, run every minute by nodeguard-watchdog.timer.
+# Lifeline probes (allowlisted paths) detect datapath death; the canary probe
+# (a deliberately NON-allowlisted TCP/443 target) detects over-blocking.
+# Latch semantics per design.md section 4.
+set -uo pipefail
+. /usr/local/lib/nodeguard/nodeguard-lib.sh
+ng_env
+mkdir -p "$NG_RUN"
+
+# Nothing to guard before the maps exist.
+[ -e "$NG_PIN/config" ] || exit 0
+
+counter() { cat "$NG_RUN/wd_$1" 2>/dev/null || echo 0; }
+set_counter() { echo "$2" > "$NG_RUN/wd_$1"; }
+
+# --- port refresh (every cycle, attach state irrelevant) ---
+live_port=$(ng_live_wg_port)
+cfg_port=$(ng_cfg_get 0 2>/dev/null || echo "")
+if [ -n "$live_port" ] && [ -n "$cfg_port" ] && [ "$live_port" != "$cfg_port" ]; then
+    ng_cfg_set 0 "$live_port"
+    ng_log "watchdog: wg port moved $cfg_port -> $live_port; config[0] rewritten" warning
+fi
+
+# --- probes ---
+probe_gw() {
+    local gw
+    gw=$(ip -4 route show default 2>/dev/null | awk '{print $3; exit}')
+    [ -n "$gw" ] && ping -c1 -W2 "$gw" >/dev/null 2>&1
+}
+probe_dns() {
+    python3 - <<'PYEOF' >/dev/null 2>&1
+import socket, struct, sys
+q = struct.pack(">HHHHHH", 0x1234, 0x0100, 1, 0, 0, 0)
+for part in b"quad9", b"net":
+    q += bytes([len(part)]) + part
+q += b"\x00" + struct.pack(">HH", 1, 1)
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+s.settimeout(3)
+s.sendto(q, ("9.9.9.9", 53))
+data, _ = s.recvfrom(512)
+sys.exit(0 if len(data) > 12 else 1)
+PYEOF
+}
+probe_tailscale() {
+    tailscale status --json 2>/dev/null | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+sys.exit(0 if d.get("Self", {}).get("Online") else 1)
+' 2>/dev/null
+}
+probe_officegw() {
+    [ -n "${OFFICE_GW:-}" ] && ping -c1 -W2 "$OFFICE_GW" >/dev/null 2>&1
+}
+probe_canary() {
+    python3 - "$CANARY_IP" "${CANARY_PORT:-443}" <<'PYEOF' >/dev/null 2>&1
+import socket, sys
+s = socket.create_connection((sys.argv[1], int(sys.argv[2])), timeout=5)
+s.close()
+PYEOF
+}
+
+lifeline_ok=0
+lifeline_all_fail=1
+for probe in ${LIFELINES:?LIFELINES not set}; do
+    if "probe_$probe"; then
+        lifeline_ok=1
+        lifeline_all_fail=0
+    fi
+done
+
+canary_ok=0
+probe_canary && canary_ok=1
+
+# --- attach state: with no program attached there is nothing to latch ---
+attached=0
+[ -n "$(ng_prog_ids | head -1)" ] && attached=1
+if [ "$attached" -eq 0 ]; then
+    set_counter canary_fail 0
+    set_counter lifeline_fail 0
+    set_counter clean 0
+    exit 0
+fi
+
+ks=$(ng_cfg_get 1)
+
+# --- counters ---
+if [ "$canary_ok" -eq 1 ]; then
+    set_counter canary_fail 0
+else
+    set_counter canary_fail $(( $(counter canary_fail) + 1 ))
+fi
+if [ "$lifeline_all_fail" -eq 1 ]; then
+    set_counter lifeline_fail $(( $(counter lifeline_fail) + 1 ))
+else
+    set_counter lifeline_fail 0
+fi
+if [ "$canary_ok" -eq 1 ] && [ "$lifeline_all_fail" -eq 0 ]; then
+    set_counter clean $(( $(counter clean) + 1 ))
+else
+    set_counter clean 0
+fi
+
+# --- actions ---
+if [ "$ks" = "0" ]; then
+    if [ "$(counter canary_fail)" -ge 3 ] && [ "$lifeline_ok" -eq 1 ]; then
+        drops=$(python3 "$NG_MAP" stats --json 2>/dev/null || echo '{}')
+        /usr/local/sbin/nodeguard-off --watchdog
+        ng_log "watchdog: OVER-BLOCK suspected (canary $CANARY_IP:${CANARY_PORT:-443} failed 3 cycles, lifelines fine); enforcement soft-off. stats: $drops" crit
+    elif [ "$(counter lifeline_fail)" -ge 5 ]; then
+        /usr/local/sbin/nodeguard-off --watchdog
+        set_counter lifeline_fail 0
+        ng_log "watchdog: all lifelines failing 5 cycles; enforcement soft-off (may be an upstream outage)" crit
+    fi
+else
+    # Latched.
+    if [ "$(counter lifeline_fail)" -ge 10 ]; then
+        ng_log "watchdog: lifelines still dead 10 cycles after soft-off; detaching XDP" crit
+        systemctl stop nodeguard-xdp.service
+        set_counter lifeline_fail 0
+    fi
+    # Bounded auto re-arm: watchdog-set latches only, once per boot.
+    if [ -f "$NG_RUN/watchdog_off" ] && [ ! -f "$NG_RUN/manual_off" ] \
+        && [ "$(counter clean)" -ge 15 ] && [ "$(ng_cfg_get 2)" = "0" ]; then
+        /usr/local/sbin/nodeguard-on
+        ng_cfg_set 2 1
+        ng_log "watchdog: auto re-arm after 15 clean cycles (once per boot); enforcement back ON" crit
+    fi
+    # Hourly reminder while latched.
+    last=$(cat "$NG_RUN/wd_last_remind" 2>/dev/null || echo 0)
+    now=$(date +%s)
+    if [ $(( now - last )) -ge 3600 ]; then
+        ng_log "watchdog: enforcement is OFF (latched: $( [ -f "$NG_RUN/manual_off" ] && echo manual || echo watchdog )); nodeguard-on to re-arm" crit
+        echo "$now" > "$NG_RUN/wd_last_remind"
+    fi
+fi
+exit 0

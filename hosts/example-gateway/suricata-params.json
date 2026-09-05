@@ -1,0 +1,9 @@
+{
+  "iface": "eth0",
+  "home_net": "[192.0.2.0/24,100.64.0.0/10]",
+  "threads": 4,
+  "ring_size": 32768,
+  "management_cpus": [1],
+  "worker_cpus": ["4-7"],
+  "bpf_filter": null
+}

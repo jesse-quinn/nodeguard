@@ -1,0 +1,12 @@
+[Unit]
+Description=nodeguard pinned BPF maps, allowlist, and WireGuard port
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/nodeguard-maps
+
+[Install]
+WantedBy=multi-user.target

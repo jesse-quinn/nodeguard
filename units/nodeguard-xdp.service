@@ -1,0 +1,14 @@
+[Unit]
+Description=nodeguard XDP firewall attach (native mode, libxdp dispatcher)
+Requires=nodeguard-maps.service
+After=nodeguard-maps.service network-online.target NetworkManager.service docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/nodeguard-attach
+ExecStop=/usr/local/sbin/nodeguard-detach
+
+[Install]
+WantedBy=multi-user.target

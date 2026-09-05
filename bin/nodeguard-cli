@@ -1,0 +1,46 @@
+#!/bin/bash
+# nodeguard-cli: multiplexed thin wrappers over ngmap.py plus the kill
+# switch. Installed as nodeguard-block, nodeguard-unblock, nodeguard-list,
+# nodeguard-flush, nodeguard-off, nodeguard-on (symlinks to this file).
+set -uo pipefail
+. /usr/local/lib/nodeguard/nodeguard-lib.sh
+
+cmd=$(basename "$0")
+case "$cmd" in
+nodeguard-block)
+    target="${1:?usage: nodeguard-block <ip|cidr> [ttl_seconds] [--permanent --i-mean-it]}"
+    shift
+    ttl=3600
+    if [ "$#" -ge 1 ] && [[ "${1:-}" =~ ^[0-9]+$ ]]; then
+        ttl="$1"
+        shift
+    fi
+    exec python3 "$NG_MAP" block "$target" --ttl "$ttl" "$@"
+    ;;
+nodeguard-unblock)
+    exec python3 "$NG_MAP" unblock "${1:?usage: nodeguard-unblock <ip|cidr>}"
+    ;;
+nodeguard-list)
+    exec python3 "$NG_MAP" list "$@"
+    ;;
+nodeguard-flush)
+    exec python3 "$NG_MAP" flush
+    ;;
+nodeguard-off)
+    mkdir -p "$NG_RUN"
+    marker="$NG_RUN/manual_off"
+    [ "${1:-}" = "--watchdog" ] && marker="$NG_RUN/watchdog_off"
+    ng_cfg_set 1 1
+    touch "$marker"
+    ng_log "kill switch SET ($(basename "$marker")); nodeguard passes everything" crit
+    ;;
+nodeguard-on)
+    ng_cfg_set 1 0
+    rm -f "$NG_RUN/manual_off" "$NG_RUN/watchdog_off"
+    ng_log "kill switch cleared; nodeguard enforcing" notice
+    ;;
+*)
+    echo "nodeguard-cli: unknown invocation name '$cmd'" >&2
+    exit 2
+    ;;
+esac

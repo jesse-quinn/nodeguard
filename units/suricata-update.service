@@ -1,0 +1,9 @@
+[Unit]
+Description=Update Suricata rulesets (et/open) and reload nonblocking
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/suricata-update
+ExecStartPost=-/usr/bin/suricatasc -c ruleset-reload-nonblocking

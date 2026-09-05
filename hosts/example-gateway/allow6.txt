@@ -1,0 +1,4 @@
+::1/128
+fe80::/10
+# Your tailnet's ULA prefix:
+# fd7a:115c:a1e0::/48

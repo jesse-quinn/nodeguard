@@ -1,0 +1,12 @@
+[Unit]
+Description=nodeguard responder: Suricata alerts to XDP blocklist
+After=suricata.service nodeguard-xdp.service
+Wants=suricata.service
+
+[Service]
+ExecStart=/usr/local/sbin/nodeguard-responder
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

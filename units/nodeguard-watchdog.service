@@ -1,0 +1,6 @@
+[Unit]
+Description=nodeguard watchdog cycle (lifelines, canary, port refresh)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/nodeguard-watchdog

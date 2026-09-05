@@ -1,0 +1,76 @@
+#!/bin/bash
+# nodeguard-canary: node-3's self-recovering first attach. Run DETACHED:
+#   sudo systemd-run --unit ng-canary --collect /bin/bash /usr/local/sbin/nodeguard-canary
+# Starts nodeguard-xdp, self-checks with patience, writes its verdict early,
+# and waits up to 600 s for /run/nodeguard/confirmed (touched by the operator
+# over ssh). On timeout it stops nodeguard-xdp: physical presence never
+# required. At most ONE automatic retry; a second failure needs a human.
+set -uo pipefail
+. /usr/local/lib/nodeguard/nodeguard-lib.sh
+ng_env
+mkdir -p "$NG_RUN"
+
+RESULT="$NG_RUN/canary_result"
+CONFIRM="$NG_RUN/confirmed"
+rm -f "$RESULT" "$CONFIRM"
+
+self_check() {
+    # Gate on link state, then retry connectivity for up to 60 s: judging
+    # after a fixed short sleep records false failures during renegotiation.
+    local deadline=$(( $(date +%s) + 60 ))
+    while [ "$(date +%s)" -lt "$deadline" ]; do
+        if ping -c1 -W2 "${OFFICE_GW:-192.168.0.1}" >/dev/null 2>&1 \
+            && ping -c1 -W2 9.9.9.9 >/dev/null 2>&1; then
+            return 0
+        fi
+        sleep 3
+    done
+    return 1
+}
+
+attempt() {
+    systemctl start nodeguard-xdp.service
+    if ! systemctl is-active --quiet nodeguard-xdp.service; then
+        echo "attach-unit-failed" > "$RESULT"
+        return 1
+    fi
+    if ! self_check; then
+        echo "connectivity-failed" > "$RESULT"
+        systemctl stop nodeguard-xdp.service
+        return 1
+    fi
+    # Assert config[0] matches the port tailscaled actually bound.
+    local live cfg
+    live=$(ng_live_wg_port)
+    cfg=$(ng_cfg_get 0 2>/dev/null || echo "")
+    if [ -n "$live" ] && [ "$live" != "$cfg" ]; then
+        echo "port-mismatch cfg=$cfg live=$live" > "$RESULT"
+        systemctl stop nodeguard-xdp.service
+        return 1
+    fi
+    echo "ok" > "$RESULT"
+    return 0
+}
+
+if ! attempt; then
+    ng_log "canary: first attempt failed ($(cat "$RESULT")); retrying once" warning
+    sleep 10
+    if ! attempt; then
+        ng_log "canary: second attempt failed ($(cat "$RESULT")); giving up, XDP detached" crit
+        exit 1
+    fi
+fi
+
+ng_log "canary: attach healthy; waiting up to 600 s for operator confirm (touch $CONFIRM)"
+deadline=$(( $(date +%s) + 600 ))
+while [ "$(date +%s)" -lt "$deadline" ]; do
+    if [ -f "$CONFIRM" ]; then
+        ng_log "canary: operator confirmed; nodeguard-xdp stays up"
+        exit 0
+    fi
+    sleep 5
+done
+
+ng_log "canary: no confirmation within 600 s; stopping nodeguard-xdp (self-recovery)" crit
+systemctl stop nodeguard-xdp.service
+exit 1

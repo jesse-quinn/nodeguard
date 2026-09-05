@@ -1,0 +1,14 @@
+# Static allowlist. Reconciled into the allow4 map by nodeguard-maps;
+# removals take effect on the next service restart.
+127.0.0.0/8
+10.0.0.0/8
+172.16.0.0/12
+192.168.0.0/16
+100.64.0.0/10
+169.254.0.0/16
+# Upstream DNS resolvers you depend on:
+9.9.9.9/32
+149.112.112.112/32
+# MANDATORY before enforcement: your stable remote egress IPs (phone
+# hotspot, office, travel), so a false positive cannot lock you out.
+# 203.0.113.10/32

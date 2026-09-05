@@ -1,0 +1,60 @@
+#!/bin/bash
+# nodeguard-reload: hitless object update. Loads the new object as an
+# additional dispatcher member against the same pin root, verifies map
+# identity, then unloads the OLD program by id.
+# systemctl restart nodeguard-xdp is a full detach/reattach (ixgbe link
+# blips) and is the wrong tool for deploying a patched object.
+set -uo pipefail
+. /usr/local/lib/nodeguard/nodeguard-lib.sh
+ng_env
+
+new_obj="${1:-$NG_OBJ}"
+[ -f "$new_obj" ] || { echo "no such object: $new_obj" >&2; exit 2; }
+
+old_ids=$(ng_prog_ids)
+if [ -z "$old_ids" ]; then
+    echo "nodeguard is not attached on $IFACE; use systemctl start nodeguard-xdp" >&2
+    exit 2
+fi
+
+if ! xdp-loader load -m native -p "$NG_PIN" "$IFACE" "$new_obj"; then
+    ng_log "reload: load of $new_obj failed; old program still enforcing" err
+    exit 1
+fi
+
+new_id=""
+for id in $(ng_prog_ids); do
+    case " $old_ids " in
+    *" $id "*) ;;
+    *) new_id="$id" ;;
+    esac
+done
+if [ -z "$new_id" ]; then
+    ng_log "reload: could not identify the new program id; manual inspection required" err
+    exit 1
+fi
+
+prog_maps=$(bpftool prog show id "$new_id" -j | python3 -c \
+    'import json,sys; print(" ".join(str(i) for i in json.load(sys.stdin).get("map_ids", [])))')
+for m in allow4 allow6 block4 block6 config stats; do
+    pinned_id=$(bpftool map show pinned "$NG_PIN/$m" -j | python3 -c \
+        'import json,sys; print(json.load(sys.stdin)["id"])')
+    case " $prog_maps " in
+    *" $pinned_id "*) ;;
+    *)
+        ng_log "reload: new prog $new_id does not use pinned $m; unloading it, old program keeps enforcing" err
+        xdp-loader unload "$IFACE" -i "$new_id"
+        exit 1
+        ;;
+    esac
+done
+
+for id in $old_ids; do
+    xdp-loader unload "$IFACE" -i "$id"
+done
+echo "$new_id" > "$NG_RUN/prog_id"
+if [ "$new_obj" != "$NG_OBJ" ]; then
+    install -m 0644 "$new_obj" "$NG_OBJ"
+    restorecon "$NG_OBJ" 2>/dev/null || true
+fi
+ng_log "reload: swapped to prog id $new_id (old: $old_ids); map identity verified"
