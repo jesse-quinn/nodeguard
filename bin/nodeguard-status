@@ -51,12 +51,8 @@ if [ "$sur_active" = "active" ]; then
 import json, sys
 try:
     d = json.load(sys.stdin)["message"]
-    total = 0
-    for tname, tvals in d.items():
-        cap = tvals.get("capture") if isinstance(tvals, dict) else None
-        if isinstance(cap, dict):
-            total += cap.get("kernel_drops", 0)
-    print(total)
+    # Counters are aggregated at message.capture, not per thread.
+    print(d.get("capture", {}).get("kernel_drops", 0))
 except Exception:
     print("")
 ' || true)
