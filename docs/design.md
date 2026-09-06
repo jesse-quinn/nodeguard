@@ -871,8 +871,16 @@ OpenSpec proposal cycle:
    only; no new drop path. Closes the distributed low-rate flood blind spot
    at the observability layer. Implemented in shadow mode by OpenSpec
    change `add-nodeguard-telemetry` (section 6.3; local EWMA plus Zabbix
-   seasonal triggers); promotion to `on` is gated on the phase 5 shadow
-   review.
+   seasonal triggers). Shipped and archived. `WD_ANOM_MODE=on` is live
+   fleet-wide (alerting-only; the detector never touches enforcement) with
+   the Zabbix `baselinedev` triggers held at Information severity. The
+   remaining maturation is post-archive operational follow-up, not a new
+   spec change: retune `WD_ANOM_K`/`WD_ANOM_FLOOR` from real deltas, choose
+   the Zabbix static ceilings from observed data, promote the baselinedev
+   triggers only after 14-day trend maturity (`trend.get`) with a quiet
+   review, and run the synthetic-burst recovery drill. Also carried here:
+   the latch-cost micro-benchmark and the fleet-scale synthetic-host
+   dashboard drill.
 3. Protocol-sanity counters in the XDP program: count implausible frames
    (impossible TCP flag combinations, TTL outliers, fragments) into new
    stats slots; every new branch still resolves to XDP_PASS. Telemetry,

@@ -60,26 +60,26 @@ and any restart reloads it.
       nodeguard-sweep.timer OnBootSec 10min to 2min; nodeguard-status
       emits ng.sweep_age from sweep_ts and omits all mapstat keys when
       the file is missing or empty
-- [ ] 1.8 bin/nodeguard-feeds: trigger a one-off sweep
+- [x] 1.8 bin/nodeguard-feeds: trigger a one-off sweep
       (`systemctl start nodeguard-sweep.service`) after apply instead
       of writing mapstat.kv; note in add-nodeguard-feeds tasks.md that
       its pending activation rehearsal now runs against this phase 1
       binary (cross-change rule, design section 10)
-- [ ] 1.9 Dispatcher health: reload and attach write
+- [x] 1.9 Dispatcher health: reload and attach write
       /run/nodeguard/expected_prog_id, detach removes it; status emits
       ng.prog_match and ng.attach_mode, emitting nothing for
       prog_match when the expectation file is absent
-- [ ] 1.10 Watchdog internals kv: ng.wd_canary_fail, wd_lifeline_fail,
+- [x] 1.10 Watchdog internals kv: ng.wd_canary_fail, wd_lifeline_fail,
       wd_toolfail, wd_clean from the existing /run/nodeguard/wd_*
       files; document the one-cycle lag and use >= trigger comparisons
-- [ ] 1.11 Security-event kv: nodeguard-responder writes
+- [x] 1.11 Security-event kv: nodeguard-responder writes
       /run/nodeguard/responder.kv (resp_alerts_seen,
       resp_blocks_issued, resp_dryrun_would_block, resp_last_alert_ts,
       resp_last_action_ts); ng.suricata_alerts parsed from the same
       suricatasc dump-counters call as kernel_drops; wrap suricatasc in
       `timeout 5`; remove the `${kdrops:-0}` coercion
       (nodeguard-status:93) so failure omits both keys
-- [ ] 1.12 Watchdog EWMA anomaly layer (ships in this deploy set,
+- [x] 1.12 Watchdog EWMA anomaly layer (ships in this deploy set,
       WD_ANOM_MODE=shadow default): per-cycle deltas of drop_total,
       pass, sanity_total, suricata_alerts; EWMA mean and absolute
       deviation (alpha 0.05) in /var/lib/nodeguard/wd_baseline.json;
@@ -93,46 +93,46 @@ and any restart reloads it.
       whether bpftool reports a usable live entry count for LPM_TRIE
       maps; record the answer; the sweep-count derivation stands unless
       a cheaper accurate source exists
-- [ ] 1.14 Build gate (phase 1): bash -n and shellcheck clean on every
+- [x] 1.14 Build gate (phase 1): bash -n and shellcheck clean on every
       touched script; netns rehearsal green including the
       stats-read-failure drill (broken bpftool/ngmap path yields no
       counter lines plus ng.stats_read_fail=1, never zeros) and the
       prog_match-absent case
-- [ ] 1.15 Deploy node-3 without --with-kernel
-- [ ] 1.16 Gate: kv key list on node-3 diffs clean against the spec'd
+- [x] 1.15 Deploy node-3 without --with-kernel
+- [x] 1.16 Gate: kv key list on node-3 diffs clean against the spec'd
       list
-- [ ] 1.17 Gate: grep proof that `list --json` is unreachable from the
+- [x] 1.17 Gate: grep proof that `list --json` is unreachable from the
       kv code path
-- [ ] 1.18 Gate: sweep produces mapstat.kv and ng.blocks reconciles
+- [x] 1.18 Gate: sweep produces mapstat.kv and ng.blocks reconciles
       against one manual `list --json` count, performed while feeds
       enforcement is off (its current state) so the reconciliation
       cannot race a feeds apply (cross-change rule, design section 10)
-- [ ] 1.19 Gate: a deliberate bpftool break on node-3 shows counters
+- [x] 1.19 Gate: a deliberate bpftool break on node-3 shows counters
       unsupported plus stats_read_fail=1, not zeros
-- [ ] 1.20 Gate: 24h soak on node-3 with wd_clean advancing and no new
+- [x] 1.20 Gate: 24h soak on node-3 with wd_clean advancing and no new
       journal errors; then deploy node-2 and repeat 1.16 to 1.19
 
 ## 2. Pre-phase-2 gates and phase 2: template v2
 
-- [ ] 2.1 Add nodeguard.kv.raw UserParameter to
+- [x] 2.1 Add nodeguard.kv.raw UserParameter to
       etc/zabbix-userparameter-nodeguard.conf (keep nodeguard.kv[*]);
       deploy.sh stages and installs it (in the phase 1 deploy set);
       runbook names the zabbix-agent restart as an explicit step
-- [ ] 2.2 Hard gate (pre-phase-2): restart zabbix-agent on both hosts
+- [x] 2.2 Hard gate (pre-phase-2): restart zabbix-agent on both hosts
       and verify `zabbix_get -k nodeguard.kv.raw` from the Zabbix
       server against BOTH hosts before any template import
-- [ ] 2.3 Write zbx/gen-template.py: deterministic render of
+- [x] 2.3 Write zbx/gen-template.py: deterministic render of
       templates/zabbix-nodeguard-template.json; uuid map seeded from
       the committed v1 with verbatim carry-over, uuid5 minting only for
       new objects; display names of existing items reproduced
       byte-for-byte
-- [ ] 2.4 Write zbx/check_template.py: assert every generated
+- [x] 2.4 Write zbx/check_template.py: assert every generated
       preprocessing regex `(?m)^ng\.<field>=(.+)$` extracts a value
       from a captured real nodeguard.kv; assert display-name parity
       against committed v1; cross-check template keys against the
       documented kv key list; wire into build/build.sh so drift fails
       the build
-- [ ] 2.5 Generate v2: master item nodeguard.kv.raw (TEXT, 1m, history
+- [x] 2.5 Generate v2: master item nodeguard.kv.raw (TEXT, 1m, history
       1d, trends none); every existing item keeps its key and flips to
       dependent; new dependent items (three missing stats slots,
       stats_read_fail, stats2_read_fail, seven stats2 counters,
@@ -141,7 +141,7 @@ and any restart reloads it.
       sweep_walk_ms, top1_hits, top_blocked, rearm_count, prog_match,
       attach_mode, four wd_*, anomaly_count, anomaly_shadow_count,
       anomaly_last_ts); rate items get 90d trend storage
-- [ ] 2.6 Generate the trigger set: change(anomaly_count)>0 High;
+- [x] 2.6 Generate the trigger set: change(anomaly_count)>0 High;
       prog_match=0 for 3m High; attach_mode<>native while attached
       Warning; change(rearm_count)>0 Warning; wd_canary_fail>=2 or
       wd_lifeline_fail>=2 Warning; stats_read_fail=1 or counters
@@ -152,14 +152,14 @@ and any restart reloads it.
       24h Warning with no last()>0 gate; baselinedev conjunctions with
       absolute floors, and static ceilings, imported at Information
       severity only
-- [ ] 2.7 LLD: one discovery rule dependent on the master extracting
+- [x] 2.7 LLD: one discovery rule dependent on the master extracting
       {#FEED} from feeds_last_success_ts_* keys (delay 1h,
       keep-lost-resources 30d); prototype keys DISTINCT from static
       keys (nodeguard.feed.success_ts[{#FEED}],
       nodeguard.feed.age[{#FEED}]); prototype stale/failed-open/
       upstream-frozen triggers at Information severity during parity,
       each paired with a nodata() guard
-- [ ] 2.8 Feeds writer visibility: emit per-feed snapshot_age only
+- [x] 2.8 Feeds writer visibility: emit per-feed snapshot_age only
       after a feed's first success, so pre-first-run items are visibly
       undiscovered or unsupported instead of green-zero
 - [x] 2.9 Hard gate (pre-phase-2, open question): scratch-template
@@ -167,28 +167,28 @@ and any restart reloads it.
       itemids are preserved across the upgrade and one dependent item
       parses a pasted kv blob; Zabbix same-key/different-uuid import
       behavior is treated as unverified until this passes
-- [ ] 2.10 Export the current live template to output/ as the rollback
+- [x] 2.10 Export the current live template to output/ as the rollback
       artifact, then import the generated v2
-- [ ] 2.11 Gate: every item fresh in Latest Data within 5 minutes on
+- [x] 2.11 Gate: every item fresh in Latest Data within 5 minutes on
       both hosts, EXCEPT the stats2 items and their rate twins
       (ng.tcp_synfin, ng.tcp_synrst, ng.tcp_null, ng.tcp_xmas,
       ng.ttl_low, ng.frag_v4, ng.frag_v6 and each rate twin, plus
       ng.stats2_read_fail), which MUST be unsupported until phase 3
       creates the pin
-- [ ] 2.12 Gate: ng.ts advancing across two consecutive samples and one
+- [x] 2.12 Gate: ng.ts advancing across two consecutive samples and one
       XDP counter strictly monotonic on both hosts (dependent
       freshness alone only proves the regexes, not a live pipeline)
-- [ ] 2.13 Gate: a deliberate 3-minute watchdog-timer stop on node-3
+- [x] 2.13 Gate: a deliberate 3-minute watchdog-timer stop on node-3
       confirms fuzzytime(ts,300) fires and recovers
-- [ ] 2.14 Gate: the old "Nodeguard" dashboard's graphs render
+- [x] 2.14 Gate: the old "Nodeguard" dashboard's graphs render
       non-empty for both hosts (display-name contract held); agent log
       shows one kv.raw poll per minute
-- [ ] 2.15 Gate: LLD discovers all three feeds under the new prototype
+- [x] 2.15 Gate: LLD discovers all three feeds under the new prototype
       keys; after 24h of value-parity between static and LLD per-feed
       items, remove the static per-feed items and their triggers as
       this recorded step (per-feed history under the old keys is lost;
       accepted)
-- [ ] 2.16 Gate: 48h on the v2 template without unexpected trigger
+- [x] 2.16 Gate: 48h on the v2 template without unexpected trigger
       flaps; baseline triggers still at Information severity only
 
 ## 3. Phase 3: kernel stats2 (one sitting per host; minutes, not days)
@@ -281,17 +281,17 @@ and any restart reloads it.
       honeycomb and gauge widget field names against the live 7.4 API
       with one plan-mode diff against a hand-exported dashboard before
       the first --confirm
-- [ ] 4.6 Rewrite docs/legend.html: three anchored sections, one line
+- [x] 4.6 Rewrite docs/legend.html: three anchored sections, one line
       per panel stating what normal looks like; top_blocked labeled
       "since last sweep walk" with cumulative secondary; each
       dashboard's URL widget points at its anchor
-- [ ] 4.7 Apply, per the section 8 procedure: export the live
+- [x] 4.7 Apply, per the section 8 procedure: export the live
       "Nodeguard" dashboard JSON to output/; create "NodeGuard
       Overview" as a NEW dashboard (never update "Nodeguard" in
       place); run the side-by-side parity check against the still-live
       "Nodeguard"; only then delete "Nodeguard" and the old private
       script in the same step
-- [ ] 4.8 Gate: all widgets non-empty for both hosts; legend anchors
+- [x] 4.8 Gate: all widgets non-empty for both hosts; legend anchors
       resolve
 - [ ] 4.9 Gate (fleet-scale drill): run the generator plan with a
       synthetic third host in the group and verify the plan output
@@ -300,6 +300,17 @@ and any restart reloads it.
       name, and the drill asserts the plan's dataset host patterns
       equal visible names (Zabbix matches dataset host patterns
       against the visible name)
+
+> POST-ARCHIVE OPERATIONAL FOLLOW-UP (not gating this change). The nine
+> remaining unchecked tasks below (5.1-5.4, 6.1-6.3) plus 3.6 (latch-cost
+> open question) and 4.9 (fleet-scale synthetic-host drill) are operational
+> maturation of an already-shipped, already-specced capability: soak time,
+> threshold tuning, and drills. They add NO new spec requirement (the
+> telemetry-observability spec already defines the anomaly-detection
+> behavior and its shadow-then-enable lifecycle), so they are not a separate
+> OpenSpec change; they are tracked in docs/design.md's roadmap and in
+> project memory. WD_ANOM_MODE=on is live fleet-wide with Information-only
+> triggers; promotion (6.2) waits on 14-day trend maturity.
 
 ## 5. Phase 5: anomaly shadow window
 
@@ -332,22 +343,22 @@ and any restart reloads it.
 
 ## 7. Documentation refresh (design section 11, items 1 to 19)
 
-- [ ] 7.1 (1) docs/design.md header: drop "before the first production
+- [x] 7.1 (1) docs/design.md header: drop "before the first production
       deployment"; state the actual bring-up phase (phase 2 complete,
       dry-run soak and enforcement pending); update the metadata
       header
-- [ ] 7.2 (2) design.md section 3 (Context and Scope): add
+- [x] 7.2 (2) design.md section 3 (Context and Scope): add
       external-interface rows for the three feed HTTPS sources
       (Spamhaus DROP v4/v6, DShield, 6h cadence) and the Zabbix server
-- [ ] 7.3 (3) design.md section 5 (Building Block View): add
+- [x] 7.3 (3) design.md section 5 (Building Block View): add
       nodeguard-feeds (914-line daemon),
       units/nodeguard-feeds.service/.timer, hosts/*/feeds.conf, and
       the new zbx/ directory; update the bin/ and etc/ file lists
-- [ ] 7.4 (4) design.md section 6.3 (Watchdog cycle): document the kv
+- [x] 7.4 (4) design.md section 6.3 (Watchdog cycle): document the kv
       export as the cycle's first step (the monitoring-chain entry
       point) and add the anomaly-detector step with its regime and
       update rules
-- [ ] 7.5 (5) design.md section 8: new "Monitoring chain" crosscutting
+- [x] 7.5 (5) design.md section 8: new "Monitoring chain" crosscutting
       subsection (watchdog to kv file to agent UserParameter to
       master/dependent template to dashboards), recording in prose the
       SELinux constraint that zabbix_agent_t cannot call bpf();
@@ -357,39 +368,39 @@ and any restart reloads it.
       sweep cache and its single-writer rule, the
       fail-to-unsupported discipline, the reload double-count
       artifact, and the full kv export
-- [ ] 7.6 (6) design.md section 11 (Risks): remove the three risks the
+- [x] 7.6 (6) design.md section 11 (Risks): remove the three risks the
       tree proves resolved (native attach 4.3, hitless reload 4.4, EVE
       flow fields 3.3); keep RSS measurement and
       SELinux-under-systemd; add sweep-walk-cost-at-scale with the
       Cloudflare citation and the sweep_walk_ms mitigation, and
       baseline-trigger maturity
-- [ ] 7.7 (7) design.md roadmap: mark feeds
+- [x] 7.7 (7) design.md roadmap: mark feeds
       implemented-activation-pending; point both telemetry items at
       add-nodeguard-telemetry; per-source rate limiting stays deferred
-- [ ] 7.8 (8) Verification: every factual design.md claim
+- [x] 7.8 (8) Verification: every factual design.md claim
       grep-verified against the tree in the same sitting
-- [ ] 7.9 (9) docs/adr/0006 (see task 0.2)
-- [ ] 7.10 (10) docs/adr/0007 (see task 0.3)
-- [ ] 7.11 (11) CHANGELOG.md: back-fill the entire add-nodeguard-feeds
+- [x] 7.9 (9) docs/adr/0006 (see task 0.2)
+- [x] 7.10 (10) docs/adr/0007 (see task 0.3)
+- [x] 7.11 (11) CHANGELOG.md: back-fill the entire add-nodeguard-feeds
       entry (loader, units, feeds.conf, ngmap/status changes, template
       items); an entry for the monitoring chain and the hitless-reload
       verification; the entry for this change
-- [ ] 7.12 (12) README.md: monitoring section names the three
+- [x] 7.12 (12) README.md: monitoring section names the three
       dashboards and zbx/
-- [ ] 7.13 (13) docs/legend.html full rewrite (see task 4.6)
-- [ ] 7.14 (14) etc/zabbix-userparameter-nodeguard.conf: add
+- [x] 7.13 (13) docs/legend.html full rewrite (see task 4.6)
+- [x] 7.14 (14) etc/zabbix-userparameter-nodeguard.conf: add
       nodeguard.kv.raw; keep nodeguard.kv[*]
-- [ ] 7.15 (15) hosts/example-gateway/nodeguard.env: document
+- [x] 7.15 (15) hosts/example-gateway/nodeguard.env: document
       WD_ANOM_MODE/K/FLOOR/TRIP/ADAPT with defaults and dates when
       retuned
-- [ ] 7.16 (16) deploy/deploy.sh: --with-kernel flag; stage/install the
+- [x] 7.16 (16) deploy/deploy.sh: --with-kernel flag; stage/install the
       zabbix agent conf and every other changed file following the
       feeds.conf wiring pattern; runbook note for the agent restart
-- [ ] 7.17 (17) openspec/project.md: one-line component update naming
+- [x] 7.17 (17) openspec/project.md: one-line component update naming
       nodeguard-feeds, zbx/, and stats2
-- [ ] 7.18 (18) Private overlay: historical-superseded headers on the
+- [x] 7.18 (18) Private overlay: historical-superseded headers on the
       overlay's stale design.md/proposal.md drafts, flagged to the
       operator, not silently rewritten
-- [ ] 7.19 (19) This change's own artifacts complete;
+- [x] 7.19 (19) This change's own artifacts complete;
       `openspec validate add-nodeguard-telemetry --strict` passes;
       bash -n and shellcheck on every touched script

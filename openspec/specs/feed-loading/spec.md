@@ -1,7 +1,17 @@
 # feed-loading Specification
 
 ## Purpose
-TBD - created by archiving change add-nodeguard-feeds. Update Purpose after archive.
+Load reputable threat-intel CIDR feeds (Spamhaus DROP v4/v6, DShield
+top-20) into nodeguard's block maps on a TTL that fails open by expiry, so
+a stale or unreachable feed withdraws nothing and simply decays toward no
+enforcement. This capability defines how feeds are fetched, validated, and
+gated (entry-count, aggregate-coverage, churn, and staleness brakes, plus
+the double activation gate of `FEEDS_APPLY` config and an interactive
+`apply --confirm`), how ownership is tracked through a journaled
+content-addressed store so the loader never withdraws entries written by
+the responder or an operator, and how its state is exported for monitoring.
+It exists to widen coverage against known-bad sources without adding a
+second failure mode to the datapath.
 
 ## Requirements
 
