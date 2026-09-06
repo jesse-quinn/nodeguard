@@ -51,8 +51,10 @@ metrics = {}
 d4, d6 = num("ng.drop_v4"), num("ng.drop_v6")
 if d4 is not None:
     metrics["drop_total"] = d4 + (d6 or 0)
-if num("ng.pass") is not None:
-    metrics["pass"] = num("ng.pass")
+# NOTE: ng.pass (raw default-pass bandwidth) is deliberately NOT an
+# anomaly metric: it spikes on normal traffic bursts (streaming, large
+# downloads) and is a graph signal, not an attack signal. The detector
+# watches drops, TCP-scan sanity counts, and Suricata alert volume.
 san = [num(f"ng.tcp_{c}") for c in ("synfin", "synrst", "null", "xmas")]
 if all(v is not None for v in san):
     metrics["sanity_total"] = sum(san)
