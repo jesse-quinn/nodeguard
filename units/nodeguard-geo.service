@@ -1,0 +1,7 @@
+[Unit]
+Description=nodeguard geoip enrichment of blocked sources (fail-open, read-only on the maps)
+After=nodeguard-maps.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/nodeguard-geo

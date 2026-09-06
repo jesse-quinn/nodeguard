@@ -180,6 +180,11 @@ for k, v in d.items():
     if [ -f "$RESP_KV" ]; then
         cat "$RESP_KV"
     fi
+    # Attack-origin geoip enrichment (nodeguard-geo; fail-open, absent
+    # until the first geo run and only if the DB is installed).
+    if [ -f /run/zabbix/geo.kv ]; then
+        cat /run/zabbix/geo.kv
+    fi
     # Feed loader state, persisted across reboot so staleness triggers
     # stay honest (a tmpfs fragment would false-alarm on every boot).
     if [ -f "$FEEDS_KV" ]; then

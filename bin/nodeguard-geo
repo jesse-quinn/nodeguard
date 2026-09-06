@@ -1,0 +1,215 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+"""nodeguard-geo: geolocate the sources actually hitting the blocklist and
+turn them into a live attack picture.
+
+Decoupled from enforcement by design (SAFETY): it only READS the block
+maps and the DB-IP lite CSV and WRITES two artifacts consumed by
+monitoring; if the geoip DB is missing or a lookup fails, it emits an
+empty/unknown result and nothing else in the system notices. Run from a
+timer, never in the datapath.
+
+Outputs (atomic tmp+rename):
+- /run/zabbix/geo.kv: ng.geo_* fields (top attacker countries, totals)
+  cat'd into the monitoring snapshot by nodeguard-status.
+- /var/lib/nodeguard/attack-map.svg: a self-contained world map with the
+  top blocked sources plotted, sized by hit volume; served to the
+  dashboard via a URL widget.
+
+The DB-IP lite country/city CSV (ip-to-lat/long) is expected at
+/usr/local/share/nodeguard/dbip.csv.gz (start_ip,end_ip,continent,country,
+...,lat,lon,...); install.sh fetches it. No external calls at runtime.
+"""
+
+import csv
+import gzip
+import ipaddress
+import json
+import os
+import struct
+import subprocess
+import sys
+
+PIN = "/sys/fs/bpf/nodeguard"
+DBIP = "/usr/local/share/nodeguard/dbip.csv.gz"
+GEO_KV = "/run/zabbix/geo.kv"
+MAP_SVG = "/var/lib/nodeguard/attack-map.svg"
+BPFTOOL = "/usr/sbin/bpftool"
+TOP_N = 200          # cap the geoip work: only the busiest sources
+MAP_POINTS = 60      # dots drawn on the map
+
+
+def log(msg):
+    print(msg, flush=True)
+
+
+def block_hits():
+    """Return {ip_int: (cidr_str, hits)} for every current block4 entry,
+    read straight from the pinned map via bpftool. Empty on any failure
+    (fail-open: no map, no picture, no error propagated)."""
+    out = {}
+    try:
+        raw = subprocess.run(
+            [BPFTOOL, "-j", "map", "dump", "pinned", f"{PIN}/block4"],
+            capture_output=True, text=True, timeout=30, check=True).stdout
+        entries = json.loads(raw)
+    except Exception as e:
+        log(f"geo: block4 dump failed ({e}); empty result")
+        return out
+    for e in entries:
+        try:
+            kb = bytes(int(x, 16) for x in e["key"])
+            prefixlen = struct.unpack("<I", kb[:4])[0]
+            addr = ipaddress.ip_address(kb[4:8])
+            vb = bytes(int(x, 16) for x in e["value"])
+            _expiry, hits = struct.unpack("<QQ", vb)
+            if hits > 0:
+                out[int(addr)] = (f"{addr}/{prefixlen}", hits)
+        except Exception:
+            continue
+    return out
+
+
+def load_dbip():
+    """Load the DB-IP lite ranges as a sorted list of
+    (start_int, end_int, country, lat, lon) for binary search. Returns []
+    if the DB is absent, which cleanly degrades to no geolocation."""
+    if not os.path.exists(DBIP):
+        log(f"geo: {DBIP} absent; country/map output will be empty")
+        return []
+    rows = []
+    try:
+        with gzip.open(DBIP, "rt") as f:
+            for r in csv.reader(f):
+                # DB-IP lite city-lite: start,end,continent,country,
+                # stateprov,city,lat,lon
+                if len(r) < 8:
+                    continue
+                try:
+                    start = int(ipaddress.ip_address(r[0]))
+                    end = int(ipaddress.ip_address(r[1]))
+                except ValueError:
+                    continue
+                if ipaddress.ip_address(r[0]).version != 4:
+                    continue
+                rows.append((start, end, r[3], float(r[6]), float(r[7])))
+    except Exception as e:
+        log(f"geo: DB-IP parse failed ({e}); empty result")
+        return []
+    rows.sort()
+    return rows
+
+
+def geolocate(ip_int, rows):
+    """Binary-search the sorted DB-IP ranges for the ip; return
+    (country, lat, lon) or None. Pure lookup, no side effects."""
+    lo, hi = 0, len(rows)
+    while lo < hi:
+        mid = (lo + hi) // 2
+        start, end, country, lat, lon = rows[mid]
+        if ip_int < start:
+            hi = mid
+        elif ip_int > end:
+            lo = mid + 1
+        else:
+            return country, lat, lon
+    return None
+
+
+# ------------------------------------------------------------------ SVG
+
+WORLD_W, WORLD_H = 720, 360
+
+
+def project(lat, lon):
+    """Equirectangular projection of lat/lon to the SVG viewBox."""
+    x = (lon + 180.0) * (WORLD_W / 360.0)
+    y = (90.0 - lat) * (WORLD_H / 180.0)
+    return x, y
+
+
+def render_svg(points):
+    """Build a self-contained dark world map with the top blocked
+    sources plotted as red dots sized by hit volume. points is a list of
+    (lat, lon, hits, label). Returns the SVG string; no file IO."""
+    maxhits = max((p[2] for p in points), default=1)
+    dots = []
+    for lat, lon, hits, label in points:
+        x, y = project(lat, lon)
+        r = 2.0 + 6.0 * (hits / maxhits) ** 0.5
+        dots.append(
+            f'<circle cx="{x:.1f}" cy="{y:.1f}" r="{r:.1f}" '
+            f'fill="#ff3b30" fill-opacity="0.55" stroke="#ff6b60" '
+            f'stroke-width="0.6"><title>{label}: {hits} drops</title>'
+            f'</circle>')
+    # a minimal graticule so the dots have geographic context without
+    # shipping a full coastline dataset
+    grat = []
+    for lon in range(-150, 151, 30):
+        x, _ = project(0, lon)
+        grat.append(f'<line x1="{x:.0f}" y1="0" x2="{x:.0f}" y2="{WORLD_H}" '
+                    f'stroke="#2a3441" stroke-width="0.5"/>')
+    for lat in range(-60, 61, 30):
+        _, y = project(lat, 0)
+        grat.append(f'<line x1="0" y1="{y:.0f}" x2="{WORLD_W}" y2="{y:.0f}" '
+                    f'stroke="#2a3441" stroke-width="0.5"/>')
+    return (
+        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {WORLD_W} '
+        f'{WORLD_H}" style="background:#0e1418;font-family:system-ui">'
+        f'<rect width="{WORLD_W}" height="{WORLD_H}" fill="#0e1418"/>'
+        + "".join(grat) + "".join(dots)
+        + f'<text x="8" y="18" fill="#8b98a5" font-size="11">nodeguard: '
+        f'blocked attack sources (dot size = hit volume)</text></svg>')
+
+
+def write_atomic(path, content, mode="w"):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, mode) as f:
+        f.write(content)
+    os.replace(tmp, path)
+
+
+def main():
+    hits = block_hits()
+    rows = load_dbip()
+    top = sorted(hits.items(), key=lambda kv: -kv[1][1])[:TOP_N]
+
+    countries = {}
+    points = []
+    located = 0
+    for ip_int, (cidr, n) in top:
+        g = geolocate(ip_int, rows) if rows else None
+        if g is None:
+            continue
+        country, lat, lon = g
+        countries[country] = countries.get(country, 0) + n
+        located += 1
+        if len(points) < MAP_POINTS:
+            points.append((lat, lon, n, cidr))
+
+    ranked = sorted(countries.items(), key=lambda kv: -kv[1])
+    lines = [
+        f"ng.geo_sources_hitting={len(hits)}",
+        f"ng.geo_located={located}",
+        f"ng.geo_countries={len(countries)}",
+    ]
+    for i, (cc, n) in enumerate(ranked[:5]):
+        lines.append(f"ng.geo_top{i + 1}_country={cc}")
+        lines.append(f"ng.geo_top{i + 1}_hits={n}")
+    # a compact one-line summary for a text tile
+    summary = " ".join(f"{cc}:{n}" for cc, n in ranked[:6]) or "none"
+    lines.append(f"ng.geo_summary={summary}")
+    write_atomic(GEO_KV, "\n".join(lines) + "\n")
+
+    write_atomic(MAP_SVG, render_svg(points))
+    log(f"geo: {len(hits)} hitting sources, {located} located, "
+        f"{len(countries)} countries, {len(points)} plotted")
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as e:  # never let geo enrichment fail loudly
+        log(f"geo: unexpected error, emitting nothing: {e}")
+        sys.exit(0)

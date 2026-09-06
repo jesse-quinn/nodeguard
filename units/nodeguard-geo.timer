@@ -1,0 +1,9 @@
+[Unit]
+Description=Refresh the attack-origin map and country stats every 5 minutes
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=5min
+
+[Install]
+WantedBy=timers.target

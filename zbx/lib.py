@@ -196,11 +196,22 @@ def widget(wtype, x, y, w, h, name="", fields=None):
             "width": w, "height": h, "fields": fields or []}
 
 
-def itemvalue(x, y, w, h, name, itemid):
-    """Single item value tile (widget type "item")."""
-    return widget("item", x, y, w, h, name,
-                  [_f(FIELD_ITEM, "itemid", itemid),
-                   _f(FIELD_INT, "show.0", 2)])
+def itemvalue(x, y, w, h, name, itemid, thresholds=(), sparkline=False):
+    """Single item value tile (widget type "item"). Optional numeric
+    thresholds color the displayed value (green under the first, then the
+    given colors); sparkline draws the recent trend behind the number so
+    a tile shows direction at a glance. thresholds is [(value, hex), ...]
+    and applies only to numeric items."""
+    fl = [_f(FIELD_ITEM, "itemid", itemid), _f(FIELD_INT, "show.0", 2)]
+    for i, (val, color) in enumerate(thresholds):
+        fl += [_f(FIELD_STR, "thresholds.%d.color" % i, color),
+               _f(FIELD_STR, "thresholds.%d.threshold" % i, str(val))]
+    if sparkline:
+        fl += [_f(FIELD_INT, "sparkline.show", 1),
+               _f(FIELD_STR, "sparkline.color", "3388CC"),
+               _f(FIELD_INT, "sparkline.time_period.from_type", 0),
+               _f(FIELD_STR, "sparkline.time_period.from", "now-3h")]
+    return widget("item", x, y, w, h, name, fl)
 
 
 def gauge(x, y, w, h, name, itemid, vmin=0, vmax=100, thresholds=()):
