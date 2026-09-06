@@ -10,7 +10,8 @@ Contract:
   is loaded first and object-key-to-uuid maps are built (template group by
   name, template by name, items by key, triggers by name, discovery rules
   by key). Every pre-existing object keeps its uuid verbatim; only
-  genuinely new objects get uuid5(NODEGUARD_NS, kind + ":" + object key).
+  genuinely new objects get a deterministic uuid derived from the key
+  but forced into UUIDv4 format (Zabbix rejects a raw uuid5 on import).
   This removes the delete-and-recreate risk (itemid churn, irreversible
   history loss) a full regeneration would invite.
 - Display names of items that exist in the committed v1 are reproduced
@@ -783,12 +784,19 @@ def load_uuid_maps(committed_path):
 
 
 def make_uuid(maps, kind, mapname, obj_key):
-    """Carry the committed uuid verbatim; mint uuid5 only for new
-    objects."""
+    """Carry the committed uuid verbatim; for a new object, mint one that
+    is DETERMINISTIC (same key always yields the same uuid, so
+    regeneration is byte-stable and carry-over works next time) yet in
+    UUIDv4 FORMAT, which Zabbix import requires (it rejects a raw v5).
+    The trick: derive 16 bytes from uuid5 of the key, then force the
+    version nibble to 4 and the variant bits to 10xx."""
     existing = maps[mapname].get(obj_key)
     if existing:
         return existing
-    return uuid.uuid5(NODEGUARD_NS, "%s:%s" % (kind, obj_key)).hex
+    b = bytearray(uuid.uuid5(NODEGUARD_NS, "%s:%s" % (kind, obj_key)).bytes)
+    b[6] = (b[6] & 0x0F) | 0x40   # version 4
+    b[8] = (b[8] & 0x3F) | 0x80   # variant 10xx
+    return uuid.UUID(bytes=bytes(b)).hex
 
 
 def render_trigger(maps, t, mapname="triggers", kind="trigger"):

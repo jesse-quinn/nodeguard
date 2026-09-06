@@ -20,7 +20,7 @@
     ],
     "items": [
      {
-      "uuid": "8d39d90f2df058c68bd3c4ba713e295b",
+      "uuid": "8d39d90f2df048c68bd3c4ba713e295b",
       "name": "nodeguard kv raw",
       "key": "nodeguard.kv.raw",
       "delay": "1m",
@@ -305,14 +305,14 @@
       ],
       "triggers": [
        {
-        "uuid": "9e88e2d275055106b6060862edfe410b",
+        "uuid": "9e88e2d275054106b6060862edfe410b",
         "name": "nodeguard v4 drop rate above weekly baseline on {HOST.NAME}",
         "expression": "baselinedev(/Nodeguard by Zabbix agent/nodeguard.kv[drop_v4],1h:now/h,\"d\",10)>3 and last(/Nodeguard by Zabbix agent/nodeguard.kv[drop_v4])>10",
         "priority": "INFO",
         "description": "Seasonal baseline deviation with an absolute floor (baselinedev explodes on near-zero baselines). Imported at Information severity; promoted only after 14 days of reviewed-quiet trend rows."
        },
        {
-        "uuid": "09394568a61a5281ac93f4df1d4f3da7",
+        "uuid": "09394568a61a4281ac93f4df1d4f3da7",
         "name": "nodeguard v4 drop rate above static ceiling on {HOST.NAME}",
         "expression": "min(/Nodeguard by Zabbix agent/nodeguard.kv[drop_v4],5m)>5000",
         "priority": "INFO",
@@ -351,14 +351,14 @@
       ],
       "triggers": [
        {
-        "uuid": "792ba19e783c503697037f9517d7b483",
+        "uuid": "792ba19e783c403697037f9517d7b483",
         "name": "nodeguard v6 drop rate above weekly baseline on {HOST.NAME}",
         "expression": "baselinedev(/Nodeguard by Zabbix agent/nodeguard.kv[drop_v6],1h:now/h,\"d\",10)>3 and last(/Nodeguard by Zabbix agent/nodeguard.kv[drop_v6])>10",
         "priority": "INFO",
         "description": "Seasonal baseline deviation with an absolute floor (baselinedev explodes on near-zero baselines). Imported at Information severity; promoted only after 14 days of reviewed-quiet trend rows."
        },
        {
-        "uuid": "d252f3c077cf5ee3ad4998d98eb722f4",
+        "uuid": "d252f3c077cf4ee3ad4998d98eb722f4",
         "name": "nodeguard v6 drop rate above static ceiling on {HOST.NAME}",
         "expression": "min(/Nodeguard by Zabbix agent/nodeguard.kv[drop_v6],5m)>5000",
         "priority": "INFO",
@@ -613,7 +613,7 @@
       ],
       "triggers": [
        {
-        "uuid": "49a54004049b5112a9c513d52be051ff",
+        "uuid": "49a54004049b4112a9c513d52be051ff",
         "name": "nodeguard feeds have never run on {HOST.NAME}",
         "expression": "max(/Nodeguard by Zabbix agent/nodeguard.kv[feeds_last_run_ts],24h)=0",
         "priority": "WARNING",
@@ -991,7 +991,7 @@
       ]
      },
      {
-      "uuid": "1d861446d096522e8575e1a1b5b152c0",
+      "uuid": "1d861446d096422e8575e1a1b5b152c0",
       "name": "nodeguard kv timestamp",
       "type": "DEPENDENT",
       "key": "nodeguard.kv[ts]",
@@ -1015,7 +1015,7 @@
       ],
       "triggers": [
        {
-        "uuid": "c3e7bdae26115820bb13722f12390607",
+        "uuid": "c3e7bdae26114820bb13722f12390607",
         "name": "nodeguard telemetry clock skew or frozen kv on {HOST.NAME}",
         "expression": "fuzzytime(/Nodeguard by Zabbix agent/nodeguard.kv[ts],300)=0",
         "priority": "HIGH",
@@ -1024,7 +1024,7 @@
       ]
      },
      {
-      "uuid": "333b6ef4c256578daaa774c7443150a7",
+      "uuid": "333b6ef4c256478daaa774c7443150a7",
       "name": "nodeguard stats read failure",
       "type": "DEPENDENT",
       "key": "nodeguard.kv[stats_read_fail]",
@@ -1047,7 +1047,7 @@
       ]
      },
      {
-      "uuid": "f58178cc4b6e59b7825802a2964ea7cf",
+      "uuid": "f58178cc4b6e49b7825802a2964ea7cf",
       "name": "nodeguard stats2 read failure",
       "type": "DEPENDENT",
       "key": "nodeguard.kv[stats2_read_fail]",
@@ -1070,7 +1070,7 @@
       ],
       "triggers": [
        {
-        "uuid": "f81f6d6a5db855e0ac08dd36203529f0",
+        "uuid": "f81f6d6a5db845e0ac08dd36203529f0",
         "name": "nodeguard stats2 unreadable on {HOST.NAME}",
         "expression": "last(/Nodeguard by Zabbix agent/nodeguard.kv[stats2_read_fail])=1",
         "priority": "WARNING",
@@ -1079,7 +1079,7 @@
       ]
      },
      {
-      "uuid": "4a14fc66d8d75e91bed947cb99be484c",
+      "uuid": "4a14fc66d8d74e91bed947cb99be484c",
       "name": "nodeguard expired pass rate",
       "type": "DEPENDENT",
       "key": "nodeguard.kv[pass_expired]",
@@ -1109,7 +1109,7 @@
       ]
      },
      {
-      "uuid": "971f14ef2ea55b74b5fd3ef9a9aa0dd0",
+      "uuid": "971f14ef2ea54b74b5fd3ef9a9aa0dd0",
       "name": "nodeguard non-IP pass rate",
       "type": "DEPENDENT",
       "key": "nodeguard.kv[pass_nonip]",
@@ -1139,7 +1139,7 @@
       ]
      },
      {
-      "uuid": "3e5e45877f025d8d90c0809b41810136",
+      "uuid": "3e5e45877f024d8d90c0809b41810136",
       "name": "nodeguard parse-fail pass rate",
       "type": "DEPENDENT",
       "key": "nodeguard.kv[pass_parsefail]",
@@ -1169,7 +1169,7 @@
       ]
      },
      {
-      "uuid": "930aaa33c45a53739581bc2424636ec8",
+      "uuid": "930aaa33c45a43739581bc2424636ec8",
       "name": "nodeguard TCP SYN+FIN packets",
       "type": "DEPENDENT",
       "key": "nodeguard.kv[tcp_synfin]",
@@ -1192,7 +1192,7 @@
       ]
      },
      {
-      "uuid": "be9bc7f4166a568894f10cf711b57ce7",
+      "uuid": "be9bc7f4166a468894f10cf711b57ce7",
       "name": "nodeguard TCP SYN+FIN rate",
       "type": "DEPENDENT",
       "key": "nodeguard.kv[tcp_synfin.rate]",
@@ -1222,7 +1222,7 @@
       ],
       "triggers": [
        {
-        "uuid": "15d1e8f3a3375766860ed5c2fcb5c37b",
+        "uuid": "15d1e8f3a3374766860ed5c2fcb5c37b",
         "name": "nodeguard TCP SYN+FIN rate above static floor on {HOST.NAME}",
         "expression": "min(/Nodeguard by Zabbix agent/nodeguard.kv[tcp_synfin.rate],5m)>100",
         "priority": "INFO",
@@ -1231,7 +1231,7 @@
       ]
      },
      {
-      "uuid": "3799731a7a4255788daaa2388b6c9fa6",
+      "uuid": "3799731a7a4245788daaa2388b6c9fa6",
       "name": "nodeguard TCP SYN+RST packets",
       "type": "DEPENDENT",
       "key": "nodeguard.kv[tcp_synrst]",
@@ -1254,7 +1254,7 @@
       ]
      },
      {
-      "uuid": "c55f682e8c7d58cbac73527131ee2336",
+      "uuid": "c55f682e8c7d48cbac73527131ee2336",
       "name": "nodeguard TCP SYN+RST rate",
       "type": "DEPENDENT",
       "key": "nodeguard.kv[tcp_synrst.rate]",
@@ -1284,7 +1284,7 @@
       ],
       "triggers": [
        {
-        "uuid": "f30ef386442055149fc3b94b35477b72",
+        "uuid": "f30ef386442045149fc3b94b35477b72",
         "name": "nodeguard TCP SYN+RST rate above static floor on {HOST.NAME}",
         "expression": "min(/Nodeguard by Zabbix agent/nodeguard.kv[tcp_synrst.rate],5m)>100",
         "priority": "INFO",
@@ -1293,7 +1293,7 @@
       ]
      },
      {
-      "uuid": "365f2c3d647057048cd0d596590c6e29",
+      "uuid": "365f2c3d647047048cd0d596590c6e29",
       "name": "nodeguard TCP NULL packets",
       "type": "DEPENDENT",
       "key": "nodeguard.kv[tcp_null]",
@@ -1316,7 +1316,7 @@
       ]
      },
      {
-      "uuid": "95fd193bde165462b0e4e064fb6ff525",
+      "uuid": "95fd193bde164462b0e4e064fb6ff525",
       "name": "nodeguard TCP NULL rate",
       "type": "DEPENDENT",
       "key": "nodeguard.kv[tcp_null.rate]",
@@ -1346,7 +1346,7 @@
       ],
       "triggers": [
        {
-        "uuid": "25be4b0913ff51deb824f3a8ba760d04",
+        "uuid": "25be4b0913ff41deb824f3a8ba760d04",
         "name": "nodeguard TCP NULL rate above static floor on {HOST.NAME}",
         "expression": "min(/Nodeguard by Zabbix agent/nodeguard.kv[tcp_null.rate],5m)>100",
         "priority": "INFO",
@@ -1355,7 +1355,7 @@
       ]
      },
      {
-      "uuid": "d13765ec39645cf4b33c9ff174f682b6",
+      "uuid": "d13765ec39644cf4b33c9ff174f682b6",
       "name": "nodeguard TCP XMAS packets",
       "type": "DEPENDENT",
       "key": "nodeguard.kv[tcp_xmas]",
@@ -1378,7 +1378,7 @@
       ]
      },
      {
-      "uuid": "ed041709fa465535a50942c23e96c19c",
+      "uuid": "ed041709fa464535a50942c23e96c19c",
       "name": "nodeguard TCP XMAS rate",
       "type": "DEPENDENT",
       "key": "nodeguard.kv[tcp_xmas.rate]",
@@ -1408,7 +1408,7 @@
       ],
       "triggers": [
        {
-        "uuid": "bda826c15e7c587ca0d20629dd3b352c",
+        "uuid": "bda826c15e7c487ca0d20629dd3b352c",
         "name": "nodeguard TCP XMAS rate above static floor on {HOST.NAME}",
         "expression": "min(/Nodeguard by Zabbix agent/nodeguard.kv[tcp_xmas.rate],5m)>100",
         "priority": "INFO",
@@ -1417,7 +1417,7 @@
       ]
      },
      {
-      "uuid": "e5fc8490868b5cf8a6c88dabab1f8ca1",
+      "uuid": "e5fc8490868b4cf8a6c88dabab1f8ca1",
       "name": "nodeguard low TTL packets",
       "type": "DEPENDENT",
       "key": "nodeguard.kv[ttl_low]",
@@ -1440,7 +1440,7 @@
       ]
      },
      {
-      "uuid": "7bad7131e763530298c0e555ffb40537",
+      "uuid": "7bad7131e763430298c0e555ffb40537",
       "name": "nodeguard low TTL rate",
       "type": "DEPENDENT",
       "key": "nodeguard.kv[ttl_low.rate]",
@@ -1470,7 +1470,7 @@
       ],
       "triggers": [
        {
-        "uuid": "0a8e6853159f5211a94fa963abec013e",
+        "uuid": "0a8e6853159f4211a94fa963abec013e",
         "name": "nodeguard low TTL rate above static floor on {HOST.NAME}",
         "expression": "min(/Nodeguard by Zabbix agent/nodeguard.kv[ttl_low.rate],5m)>1000",
         "priority": "INFO",
@@ -1479,7 +1479,7 @@
       ]
      },
      {
-      "uuid": "10ce701fb5195ee8b42d272216b3d802",
+      "uuid": "10ce701fb5194ee8b42d272216b3d802",
       "name": "nodeguard IPv4 fragment packets",
       "type": "DEPENDENT",
       "key": "nodeguard.kv[frag_v4]",
@@ -1502,7 +1502,7 @@
       ]
      },
      {
-      "uuid": "73375e5f980a55b893dbda1a27d7a790",
+      "uuid": "73375e5f980a45b893dbda1a27d7a790",
       "name": "nodeguard IPv4 fragment rate",
       "type": "DEPENDENT",
       "key": "nodeguard.kv[frag_v4.rate]",
@@ -1532,7 +1532,7 @@
       ],
       "triggers": [
        {
-        "uuid": "6920206f8c14539a8ceb371120d3a9e3",
+        "uuid": "6920206f8c14439a8ceb371120d3a9e3",
         "name": "nodeguard IPv4 fragment rate above static floor on {HOST.NAME}",
         "expression": "min(/Nodeguard by Zabbix agent/nodeguard.kv[frag_v4.rate],5m)>1000",
         "priority": "INFO",
@@ -1541,7 +1541,7 @@
       ]
      },
      {
-      "uuid": "4e62a77eaf505b69b51476970c842c44",
+      "uuid": "4e62a77eaf504b69b51476970c842c44",
       "name": "nodeguard IPv6 fragment packets",
       "type": "DEPENDENT",
       "key": "nodeguard.kv[frag_v6]",
@@ -1564,7 +1564,7 @@
       ]
      },
      {
-      "uuid": "f8a4e8dbcc9d58b59c518f68a6cef4c5",
+      "uuid": "f8a4e8dbcc9d48b59c518f68a6cef4c5",
       "name": "nodeguard IPv6 fragment rate",
       "type": "DEPENDENT",
       "key": "nodeguard.kv[frag_v6.rate]",
@@ -1594,7 +1594,7 @@
       ],
       "triggers": [
        {
-        "uuid": "e3881f5f7a5c5c68aab3b00cc4e100d1",
+        "uuid": "e3881f5f7a5c4c68aab3b00cc4e100d1",
         "name": "nodeguard IPv6 fragment rate above static floor on {HOST.NAME}",
         "expression": "min(/Nodeguard by Zabbix agent/nodeguard.kv[frag_v6.rate],5m)>1000",
         "priority": "INFO",
@@ -1603,7 +1603,7 @@
       ]
      },
      {
-      "uuid": "0ef4692a9fc559b8b16d55c7393e74a6",
+      "uuid": "0ef4692a9fc549b8b16d55c7393e74a6",
       "name": "suricata alerts",
       "type": "DEPENDENT",
       "key": "nodeguard.kv[suricata_alerts]",
@@ -1626,7 +1626,7 @@
       ]
      },
      {
-      "uuid": "b701bf2eaea95ef5b42987ace3d7e434",
+      "uuid": "b701bf2eaea94ef5b42987ace3d7e434",
       "name": "suricata alerts rate",
       "type": "DEPENDENT",
       "key": "nodeguard.kv[suricata_alerts.rate]",
@@ -1656,14 +1656,14 @@
       ],
       "triggers": [
        {
-        "uuid": "d875cba8241c54b08a0baee3807d02a3",
+        "uuid": "d875cba8241c44b08a0baee3807d02a3",
         "name": "suricata alert rate above weekly baseline on {HOST.NAME}",
         "expression": "baselinedev(/Nodeguard by Zabbix agent/nodeguard.kv[suricata_alerts.rate],1h:now/h,\"d\",10)>3 and last(/Nodeguard by Zabbix agent/nodeguard.kv[suricata_alerts.rate])>1",
         "priority": "INFO",
         "description": "Seasonal baseline deviation with a 1/s absolute floor. Imported at Information severity; promoted only after 14 days of reviewed-quiet trend rows."
        },
        {
-        "uuid": "1ad9977641865146b7a417bd551bc99c",
+        "uuid": "1ad9977641864146b7a417bd551bc99c",
         "name": "suricata alert rate above static ceiling on {HOST.NAME}",
         "expression": "min(/Nodeguard by Zabbix agent/nodeguard.kv[suricata_alerts.rate],5m)>50",
         "priority": "INFO",
@@ -1672,7 +1672,7 @@
       ]
      },
      {
-      "uuid": "195d25f61b68555d864a22a48c70b453",
+      "uuid": "195d25f61b68455d864a22a48c70b453",
       "name": "suricata kernel drop rate",
       "type": "DEPENDENT",
       "key": "nodeguard.kv[kernel_drops.rate]",
@@ -1702,7 +1702,7 @@
       ]
      },
      {
-      "uuid": "8f37df1a0b49542ab4afd80a38ffbce3",
+      "uuid": "8f37df1a0b49442ab4afd80a38ffbce3",
       "name": "responder alerts seen",
       "type": "DEPENDENT",
       "key": "nodeguard.kv[resp_alerts_seen]",
@@ -1725,7 +1725,7 @@
       ]
      },
      {
-      "uuid": "7b12a4a67d2d56699e9d7b09b000e63d",
+      "uuid": "7b12a4a67d2d46699e9d7b09b000e63d",
       "name": "responder blocks issued",
       "type": "DEPENDENT",
       "key": "nodeguard.kv[resp_blocks_issued]",
@@ -1748,7 +1748,7 @@
       ]
      },
      {
-      "uuid": "071d8406bdb7530bb046c3b0ebae4b95",
+      "uuid": "071d8406bdb7430bb046c3b0ebae4b95",
       "name": "responder dry-run would-block",
       "type": "DEPENDENT",
       "key": "nodeguard.kv[resp_dryrun_would_block]",
@@ -1771,7 +1771,7 @@
       ]
      },
      {
-      "uuid": "d53ee93cc7de5b61acbabba70268f6b4",
+      "uuid": "d53ee93cc7de4b61acbabba70268f6b4",
       "name": "responder last alert time",
       "type": "DEPENDENT",
       "key": "nodeguard.kv[resp_last_alert_ts]",
@@ -1795,7 +1795,7 @@
       ]
      },
      {
-      "uuid": "34d0883fd13c5ec8bdc70f3af69540f4",
+      "uuid": "34d0883fd13c4ec8bdc70f3af69540f4",
       "name": "responder last action time",
       "type": "DEPENDENT",
       "key": "nodeguard.kv[resp_last_action_ts]",
@@ -1819,7 +1819,7 @@
       ]
      },
      {
-      "uuid": "9b5a03ead1de5f99a5b94e22584b1290",
+      "uuid": "9b5a03ead1de4f99a5b94e22584b1290",
       "name": "attacker geography summary",
       "type": "DEPENDENT",
       "key": "nodeguard.kv[geo_summary]",
@@ -1842,7 +1842,7 @@
       ]
      },
      {
-      "uuid": "8c6032114d3757bea5abd0ac78fc8d14",
+      "uuid": "8c6032114d3747bea5abd0ac78fc8d14",
       "name": "attacker sources hitting",
       "type": "DEPENDENT",
       "key": "nodeguard.kv[geo_sources_hitting]",
@@ -1865,7 +1865,7 @@
       ]
      },
      {
-      "uuid": "c9db2edc1437516bae66ac29fe4dcb66",
+      "uuid": "c9db2edc1437416bae66ac29fe4dcb66",
       "name": "attacker sources geolocated",
       "type": "DEPENDENT",
       "key": "nodeguard.kv[geo_located]",
@@ -1888,7 +1888,7 @@
       ]
      },
      {
-      "uuid": "d429a2d7a79d580cb57fbbb01059431b",
+      "uuid": "d429a2d7a79d480cb57fbbb01059431b",
       "name": "attacker countries",
       "type": "DEPENDENT",
       "key": "nodeguard.kv[geo_countries]",
@@ -1911,7 +1911,7 @@
       ]
      },
      {
-      "uuid": "7c453bd6cb8d5ea4b30e69c30ef927fd",
+      "uuid": "7c453bd6cb8d4ea4b30e69c30ef927fd",
       "name": "nodeguard blocks v4",
       "type": "DEPENDENT",
       "key": "nodeguard.kv[blocks_v4]",
@@ -1934,7 +1934,7 @@
       ]
      },
      {
-      "uuid": "d816185b3e705062b08992d8606909a0",
+      "uuid": "d816185b3e704062b08992d8606909a0",
       "name": "nodeguard blocks v6",
       "type": "DEPENDENT",
       "key": "nodeguard.kv[blocks_v6]",
@@ -1957,7 +1957,7 @@
       ]
      },
      {
-      "uuid": "ed5d36ace5955ab7893f8548e20562d9",
+      "uuid": "ed5d36ace5954ab7893f8548e20562d9",
       "name": "nodeguard v4 block map utilization",
       "type": "DEPENDENT",
       "key": "nodeguard.kv[util_v4_pct]",
@@ -1981,14 +1981,14 @@
       ],
       "triggers": [
        {
-        "uuid": "04ee59f3e9be520799c7bafd737781fe",
+        "uuid": "04ee59f3e9be420799c7bafd737781fe",
         "name": "nodeguard v4 block map over 85 percent full on {HOST.NAME}",
         "expression": "last(/Nodeguard by Zabbix agent/nodeguard.kv[util_v4_pct])>85",
         "priority": "WARNING",
         "description": "Static ceiling; the backstop the trend projection cannot provide."
        },
        {
-        "uuid": "aec3be068e3156a4a64a92384063adb8",
+        "uuid": "aec3be068e3146a4a64a92384063adb8",
         "name": "nodeguard v4 block map projected full within 24h on {HOST.NAME}",
         "expression": "timeleft(/Nodeguard by Zabbix agent/nodeguard.kv[util_v4_pct],7d,90)<86400 and timeleft(/Nodeguard by Zabbix agent/nodeguard.kv[util_v4_pct],7d,90)<>-1",
         "priority": "WARNING",
@@ -1997,7 +1997,7 @@
       ]
      },
      {
-      "uuid": "b06203f6238d57849630dfd9492f5126",
+      "uuid": "b06203f6238d47849630dfd9492f5126",
       "name": "nodeguard v6 block map utilization",
       "type": "DEPENDENT",
       "key": "nodeguard.kv[util_v6_pct]",
@@ -2021,14 +2021,14 @@
       ],
       "triggers": [
        {
-        "uuid": "f73d6c6dd3325e39afb6fa6d5aa0ac9c",
+        "uuid": "f73d6c6dd3324e39afb6fa6d5aa0ac9c",
         "name": "nodeguard v6 block map over 85 percent full on {HOST.NAME}",
         "expression": "last(/Nodeguard by Zabbix agent/nodeguard.kv[util_v6_pct])>85",
         "priority": "WARNING",
         "description": "Static ceiling; the backstop the trend projection cannot provide."
        },
        {
-        "uuid": "b0e6f1dadde75e3c8988ddb861015acb",
+        "uuid": "b0e6f1dadde74e3c8988ddb861015acb",
         "name": "nodeguard v6 block map projected full within 24h on {HOST.NAME}",
         "expression": "timeleft(/Nodeguard by Zabbix agent/nodeguard.kv[util_v6_pct],7d,90)<86400 and timeleft(/Nodeguard by Zabbix agent/nodeguard.kv[util_v6_pct],7d,90)<>-1",
         "priority": "WARNING",
@@ -2037,7 +2037,7 @@
       ]
      },
      {
-      "uuid": "9d6fe286976057289a7ab652d9782db9",
+      "uuid": "9d6fe286976047289a7ab652d9782db9",
       "name": "nodeguard sweep age",
       "type": "DEPENDENT",
       "key": "nodeguard.kv[sweep_age]",
@@ -2061,7 +2061,7 @@
       ],
       "triggers": [
        {
-        "uuid": "8c861a3e099254ada4577a07d75d5bc1",
+        "uuid": "8c861a3e099244ada4577a07d75d5bc1",
         "name": "nodeguard sweep cache stale on {HOST.NAME}",
         "expression": "last(/Nodeguard by Zabbix agent/nodeguard.kv[sweep_age])>1800",
         "priority": "WARNING",
@@ -2070,7 +2070,7 @@
       ]
      },
      {
-      "uuid": "73e3ac82f0045566a00a5564849e6e38",
+      "uuid": "73e3ac82f0044566a00a5564849e6e38",
       "name": "nodeguard sweep walk duration",
       "type": "DEPENDENT",
       "key": "nodeguard.kv[sweep_walk_ms]",
@@ -2094,7 +2094,7 @@
       ]
      },
      {
-      "uuid": "a7abbd11419159e39b7c6579dd67eb7e",
+      "uuid": "a7abbd11419149e39b7c6579dd67eb7e",
       "name": "nodeguard top blocked hits",
       "type": "DEPENDENT",
       "key": "nodeguard.kv[top1_hits]",
@@ -2117,7 +2117,7 @@
       ],
       "triggers": [
        {
-        "uuid": "e34d3917a0a55362a20a5fe65ec5e0f8",
+        "uuid": "e34d3917a0a54362a20a5fe65ec5e0f8",
         "name": "nodeguard block-hit pressure above weekly baseline on {HOST.NAME}",
         "expression": "baselinedev(/Nodeguard by Zabbix agent/nodeguard.kv[top1_hits],1h:now/h,\"d\",10)>3 and last(/Nodeguard by Zabbix agent/nodeguard.kv[top1_hits])>1000",
         "priority": "INFO",
@@ -2126,7 +2126,7 @@
       ]
      },
      {
-      "uuid": "9e5cadcb01e15ef38513dc8814d7091d",
+      "uuid": "9e5cadcb01e14ef38513dc8814d7091d",
       "name": "nodeguard top blocked sources",
       "type": "DEPENDENT",
       "key": "nodeguard.kv[top_blocked]",
@@ -2149,7 +2149,7 @@
       ]
      },
      {
-      "uuid": "e5a481f70fc45d1ebf402ac34357880a",
+      "uuid": "e5a481f70fc44d1ebf402ac34357880a",
       "name": "nodeguard re-arm count",
       "type": "DEPENDENT",
       "key": "nodeguard.kv[rearm_count]",
@@ -2172,7 +2172,7 @@
       ],
       "triggers": [
        {
-        "uuid": "453e812e874e5cc1bd54f2dfe1077f62",
+        "uuid": "453e812e874e4cc1bd54f2dfe1077f62",
         "name": "nodeguard kill switch auto re-arm occurred on {HOST.NAME}",
         "expression": "change(/Nodeguard by Zabbix agent/nodeguard.kv[rearm_count])>0",
         "priority": "WARNING",
@@ -2181,7 +2181,7 @@
       ]
      },
      {
-      "uuid": "f19114fea9415d85a681489280304d0a",
+      "uuid": "f19114fea9414d85a681489280304d0a",
       "name": "nodeguard program identity match",
       "type": "DEPENDENT",
       "key": "nodeguard.kv[prog_match]",
@@ -2204,7 +2204,7 @@
       ],
       "triggers": [
        {
-        "uuid": "bab98237a03f5899a86cb445425a3380",
+        "uuid": "bab98237a03f4899a86cb445425a3380",
         "name": "nodeguard running program is not the installed one on {HOST.NAME}",
         "expression": "max(/Nodeguard by Zabbix agent/nodeguard.kv[prog_match],3m)=0",
         "priority": "HIGH",
@@ -2213,7 +2213,7 @@
       ]
      },
      {
-      "uuid": "6251baaef4d459bf8bac455d1c0067c2",
+      "uuid": "6251baaef4d449bf8bac455d1c0067c2",
       "name": "nodeguard attach mode",
       "type": "DEPENDENT",
       "key": "nodeguard.kv[attach_mode]",
@@ -2236,7 +2236,7 @@
       ]
      },
      {
-      "uuid": "afb7e48e9c9459a2bcbb11219b78db03",
+      "uuid": "afb7e48e9c9449a2bcbb11219b78db03",
       "name": "nodeguard watchdog canary failures",
       "type": "DEPENDENT",
       "key": "nodeguard.kv[wd_canary_fail]",
@@ -2259,7 +2259,7 @@
       ]
      },
      {
-      "uuid": "53562e40d86d5effa5a972e2de473a41",
+      "uuid": "53562e40d86d4effa5a972e2de473a41",
       "name": "nodeguard watchdog lifeline failures",
       "type": "DEPENDENT",
       "key": "nodeguard.kv[wd_lifeline_fail]",
@@ -2282,7 +2282,7 @@
       ]
      },
      {
-      "uuid": "48550bc91c155dd4ab343f853fa5f7a3",
+      "uuid": "48550bc91c154dd4ab343f853fa5f7a3",
       "name": "nodeguard watchdog tool failures",
       "type": "DEPENDENT",
       "key": "nodeguard.kv[wd_toolfail]",
@@ -2305,7 +2305,7 @@
       ]
      },
      {
-      "uuid": "7c1e808205cb5832b507c63d3c57ab9d",
+      "uuid": "7c1e808205cb4832b507c63d3c57ab9d",
       "name": "nodeguard watchdog clean cycles",
       "type": "DEPENDENT",
       "key": "nodeguard.kv[wd_clean]",
@@ -2328,7 +2328,7 @@
       ]
      },
      {
-      "uuid": "b6373f13e41754e2bb5f30a90ace8cb9",
+      "uuid": "b6373f13e41744e2bb5f30a90ace8cb9",
       "name": "nodeguard anomaly count",
       "type": "DEPENDENT",
       "key": "nodeguard.kv[anomaly_count]",
@@ -2351,7 +2351,7 @@
       ],
       "triggers": [
        {
-        "uuid": "c9fbdeec95825e09acebcf34bc700b0b",
+        "uuid": "c9fbdeec95824e09acebcf34bc700b0b",
         "name": "nodeguard volumetric anomaly detected on {HOST.NAME}",
         "expression": "change(/Nodeguard by Zabbix agent/nodeguard.kv[anomaly_count])>0",
         "priority": "HIGH",
@@ -2360,7 +2360,7 @@
       ]
      },
      {
-      "uuid": "8ddb73f0281d5f05b493753ebfb6d1e2",
+      "uuid": "8ddb73f0281d4f05b493753ebfb6d1e2",
       "name": "nodeguard anomaly shadow count",
       "type": "DEPENDENT",
       "key": "nodeguard.kv[anomaly_shadow_count]",
@@ -2383,7 +2383,7 @@
       ]
      },
      {
-      "uuid": "e100d56e2cd2522aba013db8bd6b72fe",
+      "uuid": "e100d56e2cd2422aba013db8bd6b72fe",
       "name": "nodeguard last anomaly time",
       "type": "DEPENDENT",
       "key": "nodeguard.kv[anomaly_last_ts]",
@@ -2407,7 +2407,7 @@
       ]
      },
      {
-      "uuid": "610a3600dbfa5aa1989ba2481396cbf7",
+      "uuid": "610a3600dbfa4aa1989ba2481396cbf7",
       "name": "nodeguard sweep timer state",
       "type": "DEPENDENT",
       "key": "nodeguard.kv[sweep_timer]",
@@ -2430,7 +2430,7 @@
       ],
       "triggers": [
        {
-        "uuid": "095ddf9102cd5ebfbd6934aebd47f4b2",
+        "uuid": "095ddf9102cd4ebfbd6934aebd47f4b2",
         "name": "nodeguard sweep timer is not active on {HOST.NAME}",
         "expression": "last(/Nodeguard by Zabbix agent/nodeguard.kv[sweep_timer])<>\"active\"",
         "priority": "WARNING",
@@ -2441,7 +2441,7 @@
     ],
     "discovery_rules": [
      {
-      "uuid": "994fb78410145143a84f0a850339ea64",
+      "uuid": "994fb78410144143a84f0a850339ea64",
       "name": "nodeguard feeds discovery",
       "type": "DEPENDENT",
       "key": "nodeguard.feeds.discovery",
@@ -2450,7 +2450,7 @@
       "description": "Discovers configured feed names from the feeds_last_success_ts_* keys in the kv export (excluding the _min aggregate). Prototype keys are distinct from the static per-feed keys so discovery never collides with them during the parity window.",
       "item_prototypes": [
        {
-        "uuid": "8cf7432b5412513fa9412a7c5e0dbb0c",
+        "uuid": "8cf7432b5412413fa9412a7c5e0dbb0c",
         "name": "feed {#FEED} last success",
         "type": "DEPENDENT",
         "key": "nodeguard.feed.success_ts[{#FEED}]",
@@ -2474,7 +2474,7 @@
         ]
        },
        {
-        "uuid": "9e255c22174c5f7cad74c0c71aca1215",
+        "uuid": "9e255c22174c4f7cad74c0c71aca1215",
         "name": "feed {#FEED} snapshot age",
         "type": "DEPENDENT",
         "key": "nodeguard.feed.age[{#FEED}]",
@@ -2500,21 +2500,21 @@
       ],
       "trigger_prototypes": [
        {
-        "uuid": "c1a1b17ccd615a4c91ed5dbef8433b25",
+        "uuid": "c1a1b17ccd614a4c91ed5dbef8433b25",
         "name": "nodeguard feed {#FEED} stale (discovered) on {HOST.NAME}",
         "expression": "last(/Nodeguard by Zabbix agent/nodeguard.feed.success_ts[{#FEED}])>0 and fuzzytime(/Nodeguard by Zabbix agent/nodeguard.feed.success_ts[{#FEED}],46800)=0 and nodata(/Nodeguard by Zabbix agent/nodeguard.feed.success_ts[{#FEED}],2h)=0",
         "priority": "INFO",
         "description": "Two full cycles plus margin without a successful exchange. Information severity during the parity window; the nodata guard silences a feed removed from feeds.conf once discovery drops it."
        },
        {
-        "uuid": "4dbe70aacf735bf5944285b1164b6d7d",
+        "uuid": "4dbe70aacf734bf5944285b1164b6d7d",
         "name": "nodeguard feed {#FEED} failed open (discovered) on {HOST.NAME}",
         "expression": "last(/Nodeguard by Zabbix agent/nodeguard.feed.success_ts[{#FEED}])>0 and fuzzytime(/Nodeguard by Zabbix agent/nodeguard.feed.success_ts[{#FEED}],93600)=0 and nodata(/Nodeguard by Zabbix agent/nodeguard.feed.success_ts[{#FEED}],2h)=0",
         "priority": "INFO",
         "description": "Entries for this feed have expired in-kernel; designed decay, not an outage. Information severity during the parity window; nodata-guarded."
        },
        {
-        "uuid": "f6ee371366bf5096a5cf211920d67948",
+        "uuid": "f6ee371366bf4096a5cf211920d67948",
         "name": "nodeguard feed {#FEED} upstream frozen (discovered) on {HOST.NAME}",
         "expression": "last(/Nodeguard by Zabbix agent/nodeguard.feed.age[{#FEED}])>604800 and nodata(/Nodeguard by Zabbix agent/nodeguard.feed.age[{#FEED}],2h)=0",
         "priority": "INFO",
@@ -2544,35 +2544,35 @@
   ],
   "triggers": [
    {
-    "uuid": "f1136a906ca659c5a461ce92da339ee2",
+    "uuid": "f1136a906ca649c5a461ce92da339ee2",
     "name": "nodeguard stats unreadable on {HOST.NAME}",
     "expression": "last(/Nodeguard by Zabbix agent/nodeguard.kv[stats_read_fail])=1 or nodata(/Nodeguard by Zabbix agent/nodeguard.kv[pass],10m)=1",
     "priority": "WARNING",
     "description": "stats_read_fail=1 or the counters are unsupported; XDP counters are unknown, not zero."
    },
    {
-    "uuid": "2f053eb114e0596794b8f0db4d549fc8",
+    "uuid": "2f053eb114e0496794b8f0db4d549fc8",
     "name": "suricata alive but counters unreadable on {HOST.NAME}",
     "expression": "nodata(/Nodeguard by Zabbix agent/nodeguard.kv[kernel_drops],10m)=1 and last(/Nodeguard by Zabbix agent/nodeguard.kv[suricata])=\"active\"",
     "priority": "WARNING",
     "description": "Live unit, dead socket: suricata reports active but kernel_drops is unsupported, which ng.suricata alone cannot catch."
    },
    {
-    "uuid": "55fcc5c131e45f79b4f92d10461944e6",
+    "uuid": "55fcc5c131e44f79b4f92d10461944e6",
     "name": "nodeguard attached in degraded mode on {HOST.NAME}",
     "expression": "last(/Nodeguard by Zabbix agent/nodeguard.kv[attach_mode])<>\"native\" and last(/Nodeguard by Zabbix agent/nodeguard.kv[attach_state])=\"attached\"",
     "priority": "WARNING",
     "description": "Attached but not in native driver mode; enforcement works with reduced performance headroom."
    },
    {
-    "uuid": "4243e73b8c805f83860d4128a6462d27",
+    "uuid": "4243e73b8c804f83860d4128a6462d27",
     "name": "nodeguard watchdog approaching trip on {HOST.NAME}",
     "expression": "last(/Nodeguard by Zabbix agent/nodeguard.kv[wd_canary_fail])>=2 or last(/Nodeguard by Zabbix agent/nodeguard.kv[wd_lifeline_fail])>=2",
     "priority": "WARNING",
     "description": "Two consecutive canary or lifeline failures; fires before the watchdog's soft-off trip. >= comparisons so the one-cycle export lag cannot mask a trip."
    },
    {
-    "uuid": "496fee73a9f25c899250d34c6dba2b5e",
+    "uuid": "496fee73a9f24c899250d34c6dba2b5e",
     "name": "nodeguard responder dry-run divergence on {HOST.NAME}",
     "expression": "(last(/Nodeguard by Zabbix agent/nodeguard.kv[resp_dryrun_would_block])-last(/Nodeguard by Zabbix agent/nodeguard.kv[resp_dryrun_would_block],#10))>0 and (last(/Nodeguard by Zabbix agent/nodeguard.kv[resp_blocks_issued])-last(/Nodeguard by Zabbix agent/nodeguard.kv[resp_blocks_issued],#10))=0",
     "priority": "INFO",
