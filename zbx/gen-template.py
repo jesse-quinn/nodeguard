@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
 """Render the nodeguard Zabbix template (v2) from a declarative table.
 
 Contract:

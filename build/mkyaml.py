@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
 """mkyaml.py: generate a host's suricata.yaml from the stock Fedora 44
 suricata 8.0.6 config plus a per-host parameter file. Run at build time
 (needs python3-pyyaml); the output is validated on-host with suricata -T

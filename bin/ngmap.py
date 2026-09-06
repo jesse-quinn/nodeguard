@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
 """ngmap.py: the single place that encodes, decodes, and mutates nodeguard's
 pinned BPF maps. Every CLI (nodeguard-block, -list, -sweep, ...) shells into
 this file so the LPM key layout exists in exactly one tested implementation.

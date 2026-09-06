@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Shared library for the nodeguard Zabbix generators.
 
 Contract:

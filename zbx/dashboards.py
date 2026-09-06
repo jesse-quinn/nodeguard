@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
 """Build the three nodeguard dashboards via the Zabbix API.
 
 Contract:

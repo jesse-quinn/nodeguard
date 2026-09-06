@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
 """Assertions over the generated nodeguard Zabbix template.
 
 Contract (nonzero exit on any failure):
