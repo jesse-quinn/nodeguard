@@ -247,7 +247,7 @@ and any restart reloads it.
 - [x] 3.11 Gate: original stats counters monotonic across the swap
       (brief ST_PASS inflation from dual-attach is expected and
       documented)
-- [ ] 3.12 Gate: a NULL-scan probe from a non-allowlisted, non-blocked
+- [x] 3.12 Gate: a NULL-scan probe from a non-allowlisted, non-blocked
       host increments tcp_null while receiving service (fail-open
       observed live)
 - [x] 3.13 Gate: ng.prog_match=1 and the stats2 template items flip to
