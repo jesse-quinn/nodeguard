@@ -1,0 +1,11 @@
+nodeguard is licensed MIT (see LICENSE), with one exception.
+
+src/nodeguard_kern.c and its compiled object nodeguard_kern.o are licensed
+GPL-2.0 (see LICENSE.GPL-2.0). This eBPF/XDP program calls GPL-only Linux
+kernel BPF helpers and must declare a GPL license (SEC("license") = "GPL",
+plus the SPDX-License-Identifier: GPL-2.0 header) for the kernel to load it;
+a non-GPL declaration is rejected at load time. This constraint is imposed by
+the Linux kernel, not chosen for the project.
+
+Everything else in this repository (userspace tooling, scripts, dashboard
+generators, systemd units, configuration, and documentation) is MIT.

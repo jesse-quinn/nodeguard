@@ -19,12 +19,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
----
-
-Exception: src/nodeguard_kern.c is licensed GPL-2.0, not MIT. It is an eBPF/XDP
-program that calls GPL-only kernel helpers and must declare a GPL license
-(SEC("license") = "GPL") for the kernel to load it. Its SPDX header states this.
-The compiled object (nodeguard_kern.o) inherits GPL-2.0. Everything else in this
-repository (the userspace tooling, scripts, generators, and documentation) is
-MIT as above.

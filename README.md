@@ -101,7 +101,8 @@ the documented last-resort rollback.
 ## License
 
 MIT (see [LICENSE](LICENSE)), with one exception: the XDP program
-`src/nodeguard_kern.c` and its compiled object are GPL-2.0, because it calls
-GPL-only kernel BPF helpers and must declare a GPL license for the kernel to
-load it. All userspace tooling, scripts, dashboard generators, and
-documentation are MIT.
+`src/nodeguard_kern.c` and its compiled object are GPL-2.0
+(see [LICENSE.GPL-2.0](LICENSE.GPL-2.0)), because it calls GPL-only kernel
+BPF helpers and must declare a GPL license for the kernel to load it. All
+userspace tooling, scripts, dashboard generators, and documentation are MIT.
+See [NOTICE](NOTICE) for the full statement.

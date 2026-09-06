@@ -1,4 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0
+// This file is GPL-2.0 (see LICENSE.GPL-2.0), unlike the MIT-licensed rest
+// of the project: an eBPF program calling GPL-only kernel helpers must
+// declare a GPL license or the kernel refuses to load it. See NOTICE.
+//
 // nodeguard: XDP blocklist firewall fed by a passive Suricata IDS.
 //
 // SAFETY: every failure path returns XDP_PASS (see design.md section 2).
