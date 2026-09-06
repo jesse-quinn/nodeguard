@@ -256,24 +256,24 @@ and any restart reloads it.
 
 ## 4. Phase 4: dashboards
 
-- [ ] 4.1 Write zbx/lib.py: urllib JSON-RPC client, itemid resolution,
+- [x] 4.1 Write zbx/lib.py: urllib JSON-RPC client, itemid resolution,
       widget builders (graph, itemvalue, gauge, honeycomb, pie, url),
       Okabe-Ito palette, 72-column grid; token from env ZTOKEN only,
       never argv, never printed
-- [ ] 4.2 Write zbx/dashboards.py: Overview, Security, Capacity and
+- [x] 4.2 Write zbx/dashboards.py: Overview, Security, Capacity and
       Pipeline per design section 8; CLI --url, --host name[:label]
       (no default), --group (default "Nodeguard nodes"),
       --host-pattern, --legend-url (GitHub Pages default),
       --dashboard, --confirm; default run prints the full plan and
       exits; idempotent update-or-create; unresolvable keys skip the
       widget loudly
-- [ ] 4.3 Fleet scaling (design section 15): the host group is the
+- [x] 4.3 Fleet scaling (design section 15): the host group is the
       canonical fleet definition; group- or pattern-addressed widgets
       wherever supported; per-host tiles and gauges generated from
       live group membership (host.get by group id); item NAME patterns
       chosen so a new host's items match without change; honeycomb
       replaces per-host tile rows at fleet sizes above two
-- [ ] 4.4 Review gate: no real host name, host-name prefix, or server
+- [x] 4.4 Review gate: no real host name, host-name prefix, or server
       URL appears anywhere in zbx/; the private wrapper
       (dashboards-apply.sh, at most 15 lines) supplies url, group,
       host pattern, and token
