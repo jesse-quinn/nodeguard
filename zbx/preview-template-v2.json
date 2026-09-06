@@ -1819,6 +1819,98 @@
       ]
      },
      {
+      "uuid": "9b5a03ead1de5f99a5b94e22584b1290",
+      "name": "attacker geography summary",
+      "type": "DEPENDENT",
+      "key": "nodeguard.kv[geo_summary]",
+      "delay": "0",
+      "value_type": "CHAR",
+      "description": "top attacker countries and hit counts (nodeguard-geo), e.g. NL:272 US:131; empty until the geoip index is installed",
+      "history": "31d",
+      "trends": "180d",
+      "master_item": {
+       "key": "nodeguard.kv.raw"
+      },
+      "preprocessing": [
+       {
+        "type": "REGEX",
+        "parameters": [
+         "(?m)^ng\\.geo_summary=(.+)$",
+         "\\1"
+        ]
+       }
+      ]
+     },
+     {
+      "uuid": "8c6032114d3757bea5abd0ac78fc8d14",
+      "name": "attacker sources hitting",
+      "type": "DEPENDENT",
+      "key": "nodeguard.kv[geo_sources_hitting]",
+      "delay": "0",
+      "value_type": "UNSIGNED",
+      "description": "distinct blocked sources that have dropped a packet",
+      "history": "31d",
+      "trends": "180d",
+      "master_item": {
+       "key": "nodeguard.kv.raw"
+      },
+      "preprocessing": [
+       {
+        "type": "REGEX",
+        "parameters": [
+         "(?m)^ng\\.geo_sources_hitting=(.+)$",
+         "\\1"
+        ]
+       }
+      ]
+     },
+     {
+      "uuid": "c9db2edc1437516bae66ac29fe4dcb66",
+      "name": "attacker sources geolocated",
+      "type": "DEPENDENT",
+      "key": "nodeguard.kv[geo_located]",
+      "delay": "0",
+      "value_type": "UNSIGNED",
+      "description": "of the hitting sources, how many resolved to a country",
+      "history": "31d",
+      "trends": "180d",
+      "master_item": {
+       "key": "nodeguard.kv.raw"
+      },
+      "preprocessing": [
+       {
+        "type": "REGEX",
+        "parameters": [
+         "(?m)^ng\\.geo_located=(.+)$",
+         "\\1"
+        ]
+       }
+      ]
+     },
+     {
+      "uuid": "d429a2d7a79d580cb57fbbb01059431b",
+      "name": "attacker countries",
+      "type": "DEPENDENT",
+      "key": "nodeguard.kv[geo_countries]",
+      "delay": "0",
+      "value_type": "UNSIGNED",
+      "description": "distinct countries among the geolocated attacker sources",
+      "history": "31d",
+      "trends": "180d",
+      "master_item": {
+       "key": "nodeguard.kv.raw"
+      },
+      "preprocessing": [
+       {
+        "type": "REGEX",
+        "parameters": [
+         "(?m)^ng\\.geo_countries=(.+)$",
+         "\\1"
+        ]
+       }
+      ]
+     },
+     {
       "uuid": "7c453bd6cb8d5ea4b30e69c30ef927fd",
       "name": "nodeguard blocks v4",
       "type": "DEPENDENT",

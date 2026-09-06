@@ -96,6 +96,8 @@ DOCUMENTED_KV_FIELDS = {
     "feeds_journal_reset", "feeds_churn_held", "feeds_last_run_ts",
     "feeds_entries", "feeds_candidates", "feeds_rejected", "feeds_failed",
     "feeds_map_errors", "feeds_last_success_ts_min",
+    "geo_summary", "geo_sources_hitting", "geo_located",
+    "geo_countries",
     "feeds_last_success_ts_spamhaus_drop_v4",
     "feeds_snapshot_age_spamhaus_drop_v4",
     "feeds_last_success_ts_spamhaus_drop_v6",
