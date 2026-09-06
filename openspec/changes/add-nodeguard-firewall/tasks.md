@@ -75,7 +75,7 @@
 
 ## 6. Phase 4: enforcement
 
-- [ ] 6.1 Flip `ENFORCE=yes` on the internet gateway; monitor
+- [x] 6.1 Flip `ENFORCE=yes` on the internet gateway; monitor
 - [ ] 6.2 Enable on the remote node only after a week of clean operation
 - [ ] 6.3 `openspec validate add-nodeguard-firewall --strict` and archive
       the change
