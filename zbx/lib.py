@@ -93,8 +93,16 @@ class RefSeq:
                     for b in "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
                     for c in "ABCDEFGHIJKLMNOPQRSTUVWXYZ")
 
-    def next(self):
+    def __iter__(self):
+        """RefSeq is its own iterator so next(refseq) works."""
+        return self
+
+    def __next__(self):
         """Return the next unique reference string in the sequence."""
+        return next(self._it)
+
+    def next(self):
+        """Backward-compatible alias for next(self)."""
         return next(self._it)
 
 
