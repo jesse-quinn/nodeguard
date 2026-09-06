@@ -41,7 +41,7 @@
       socket answers
 - [x] 3.3 Verify detection end to end from an external vantage and confirm
       alert records carry the flow counter fields the responder requires
-- [ ] 3.4 Measure steady and reload-peak RSS; set final memory caps or trim
+- [x] 3.4 Measure steady and reload-peak RSS; set final memory caps or trim
       the ruleset; watch kernel drops for one to two weeks
 
 ## 4. Phase 2: monitoring gate, maps, first attach
@@ -67,7 +67,7 @@
 
 ## 5. Phase 3: responder dry-run
 
-- [ ] 5.1 Enable the responder with `ENFORCE=no` for at least 48 to 72
+- [x] 5.1 Enable the responder with `ENFORCE=no` for at least 48 to 72
       hours; review every WOULD BLOCK line including the UDP/ICMP
       ineligible ones; tune `sids.conf`
 - [x] 5.2 Enroll the operator's stable remote egress addresses in the allow

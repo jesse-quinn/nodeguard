@@ -887,3 +887,14 @@ host. Rejected with reasons in the survey: XDPeek (dispatcher-incompatible,
 redundant), nDPI (no gap versus Suricata here), XDP synproxy and
 connection-limit tracking (no stateful listener to defend), XDP-level
 sampling (redundant with the af-packet capture path).
+
+- 2026-09-06, RSS caps finalized from production data. Suricata steady RSS
+  is ~790 MB (node-2) and ~745 MB (node-3); peak 872 MB and 813 MB
+  respectively, already including a daily ruleset reload; 52,667 rules
+  loaded, 0 failed, 0.000 percent capture drops on both. The provisional
+  10 GiB / 8 GiB MemoryMax caps were 6 to 10 times the real peak; they are
+  now MemoryHigh 1.5 GiB (soft throttle) and MemoryMax 3 GiB (hard,
+  roughly 3.4 times the observed peak). Responder enforcement enabled on
+  node-2 the same day after a 44 hour dry-run in which the anti-spoofing
+  gate rejected all 362 single-packet reputation alerts and blocked
+  nothing, confirming zero false-positive risk.
