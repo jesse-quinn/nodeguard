@@ -1,0 +1,523 @@
+{
+ "dashboardid": "409",
+ "name": "Nodeguard",
+ "userid": "1",
+ "private": "1",
+ "display_period": "60",
+ "auto_start": "1",
+ "uuid": "",
+ "pages": [
+  {
+   "dashboard_pageid": "18260",
+   "name": "",
+   "display_period": "0",
+   "widgets": [
+    {
+     "widgetid": "68134",
+     "type": "url",
+     "name": "Legend: how to read this dashboard",
+     "x": "0",
+     "y": "0",
+     "width": "72",
+     "height": "3",
+     "view_mode": "0",
+     "fields": [
+      {
+       "type": "1",
+       "name": "url",
+       "value": "https://jesse-quinn.github.io/nodeguard/legend.html"
+      }
+     ]
+    },
+    {
+     "widgetid": "68135",
+     "type": "item",
+     "name": "node-2: firewall attached?",
+     "x": "0",
+     "y": "3",
+     "width": "9",
+     "height": "3",
+     "view_mode": "0",
+     "fields": [
+      {
+       "type": "4",
+       "name": "itemid",
+       "value": "73009"
+      },
+      {
+       "type": "0",
+       "name": "show.0",
+       "value": "2"
+      }
+     ]
+    },
+    {
+     "widgetid": "68136",
+     "type": "item",
+     "name": "node-2: kill switch (0=enforcing)",
+     "x": "9",
+     "y": "3",
+     "width": "9",
+     "height": "3",
+     "view_mode": "0",
+     "fields": [
+      {
+       "type": "4",
+       "name": "itemid",
+       "value": "73012"
+      },
+      {
+       "type": "0",
+       "name": "show.0",
+       "value": "2"
+      }
+     ]
+    },
+    {
+     "widgetid": "68137",
+     "type": "item",
+     "name": "node-2: active blocks",
+     "x": "18",
+     "y": "3",
+     "width": "9",
+     "height": "3",
+     "view_mode": "0",
+     "fields": [
+      {
+       "type": "4",
+       "name": "itemid",
+       "value": "73010"
+      },
+      {
+       "type": "0",
+       "name": "show.0",
+       "value": "2"
+      }
+     ]
+    },
+    {
+     "widgetid": "68138",
+     "type": "item",
+     "name": "node-2: responder unit",
+     "x": "27",
+     "y": "3",
+     "width": "9",
+     "height": "3",
+     "view_mode": "0",
+     "fields": [
+      {
+       "type": "4",
+       "name": "itemid",
+       "value": "73015"
+      },
+      {
+       "type": "0",
+       "name": "show.0",
+       "value": "2"
+      }
+     ]
+    },
+    {
+     "widgetid": "68139",
+     "type": "item",
+     "name": "node-3: firewall attached?",
+     "x": "36",
+     "y": "3",
+     "width": "9",
+     "height": "3",
+     "view_mode": "0",
+     "fields": [
+      {
+       "type": "4",
+       "name": "itemid",
+       "value": "73017"
+      },
+      {
+       "type": "0",
+       "name": "show.0",
+       "value": "2"
+      }
+     ]
+    },
+    {
+     "widgetid": "68140",
+     "type": "item",
+     "name": "node-3: kill switch (0=enforcing)",
+     "x": "45",
+     "y": "3",
+     "width": "9",
+     "height": "3",
+     "view_mode": "0",
+     "fields": [
+      {
+       "type": "4",
+       "name": "itemid",
+       "value": "73020"
+      },
+      {
+       "type": "0",
+       "name": "show.0",
+       "value": "2"
+      }
+     ]
+    },
+    {
+     "widgetid": "68141",
+     "type": "item",
+     "name": "node-3: active blocks",
+     "x": "54",
+     "y": "3",
+     "width": "9",
+     "height": "3",
+     "view_mode": "0",
+     "fields": [
+      {
+       "type": "4",
+       "name": "itemid",
+       "value": "73018"
+      },
+      {
+       "type": "0",
+       "name": "show.0",
+       "value": "2"
+      }
+     ]
+    },
+    {
+     "widgetid": "68142",
+     "type": "item",
+     "name": "node-3: responder unit",
+     "x": "63",
+     "y": "3",
+     "width": "9",
+     "height": "3",
+     "view_mode": "0",
+     "fields": [
+      {
+       "type": "4",
+       "name": "itemid",
+       "value": "73023"
+      },
+      {
+       "type": "0",
+       "name": "show.0",
+       "value": "2"
+      }
+     ]
+    },
+    {
+     "widgetid": "68143",
+     "type": "svggraph",
+     "name": "XDP drop rate: pkts/s dropped in-driver from blocklisted sources (attacks stopped)",
+     "x": "0",
+     "y": "6",
+     "width": "36",
+     "height": "7",
+     "view_mode": "0",
+     "fields": [
+      {
+       "type": "1",
+       "name": "reference",
+       "value": "NGDAA"
+      },
+      {
+       "type": "1",
+       "name": "ds.0.hosts.0",
+       "value": "devops-hive-node-2"
+      },
+      {
+       "type": "1",
+       "name": "ds.0.items.0",
+       "value": "nodeguard XDP drop rate v4"
+      },
+      {
+       "type": "1",
+       "name": "ds.0.color",
+       "value": "0072B2"
+      },
+      {
+       "type": "1",
+       "name": "ds.1.hosts.0",
+       "value": "devops-hive-node-3"
+      },
+      {
+       "type": "1",
+       "name": "ds.1.items.0",
+       "value": "nodeguard XDP drop rate v4"
+      },
+      {
+       "type": "1",
+       "name": "ds.1.color",
+       "value": "D55E00"
+      },
+      {
+       "type": "0",
+       "name": "legend_lines",
+       "value": "2"
+      }
+     ]
+    },
+    {
+     "widgetid": "68144",
+     "type": "svggraph",
+     "name": "XDP pass rate: internet traffic reaching the blocklist check (office node near 0 is normal)",
+     "x": "36",
+     "y": "6",
+     "width": "36",
+     "height": "7",
+     "view_mode": "0",
+     "fields": [
+      {
+       "type": "1",
+       "name": "reference",
+       "value": "NGDAB"
+      },
+      {
+       "type": "1",
+       "name": "ds.0.hosts.0",
+       "value": "devops-hive-node-2"
+      },
+      {
+       "type": "1",
+       "name": "ds.0.items.0",
+       "value": "nodeguard XDP pass rate"
+      },
+      {
+       "type": "1",
+       "name": "ds.0.color",
+       "value": "0072B2"
+      },
+      {
+       "type": "1",
+       "name": "ds.1.hosts.0",
+       "value": "devops-hive-node-3"
+      },
+      {
+       "type": "1",
+       "name": "ds.1.items.0",
+       "value": "nodeguard XDP pass rate"
+      },
+      {
+       "type": "1",
+       "name": "ds.1.color",
+       "value": "D55E00"
+      },
+      {
+       "type": "0",
+       "name": "legend_lines",
+       "value": "2"
+      }
+     ]
+    },
+    {
+     "widgetid": "68145",
+     "type": "svggraph",
+     "name": "Active blocks: block-map population (entries expire in-kernel by TTL)",
+     "x": "0",
+     "y": "13",
+     "width": "36",
+     "height": "7",
+     "view_mode": "0",
+     "fields": [
+      {
+       "type": "1",
+       "name": "reference",
+       "value": "NGDAC"
+      },
+      {
+       "type": "1",
+       "name": "ds.0.hosts.0",
+       "value": "devops-hive-node-2"
+      },
+      {
+       "type": "1",
+       "name": "ds.0.items.0",
+       "value": "nodeguard active blocks"
+      },
+      {
+       "type": "1",
+       "name": "ds.0.color",
+       "value": "0072B2"
+      },
+      {
+       "type": "1",
+       "name": "ds.1.hosts.0",
+       "value": "devops-hive-node-3"
+      },
+      {
+       "type": "1",
+       "name": "ds.1.items.0",
+       "value": "nodeguard active blocks"
+      },
+      {
+       "type": "1",
+       "name": "ds.1.color",
+       "value": "D55E00"
+      },
+      {
+       "type": "0",
+       "name": "legend_lines",
+       "value": "2"
+      }
+     ]
+    },
+    {
+     "widgetid": "68146",
+     "type": "svggraph",
+     "name": "Suricata kernel drops (cumulative): climbing = capture ring overflow, detection gaps",
+     "x": "36",
+     "y": "13",
+     "width": "36",
+     "height": "7",
+     "view_mode": "0",
+     "fields": [
+      {
+       "type": "1",
+       "name": "reference",
+       "value": "NGDAD"
+      },
+      {
+       "type": "1",
+       "name": "ds.0.hosts.0",
+       "value": "devops-hive-node-2"
+      },
+      {
+       "type": "1",
+       "name": "ds.0.items.0",
+       "value": "suricata kernel drops"
+      },
+      {
+       "type": "1",
+       "name": "ds.0.color",
+       "value": "0072B2"
+      },
+      {
+       "type": "1",
+       "name": "ds.1.hosts.0",
+       "value": "devops-hive-node-3"
+      },
+      {
+       "type": "1",
+       "name": "ds.1.items.0",
+       "value": "suricata kernel drops"
+      },
+      {
+       "type": "1",
+       "name": "ds.1.color",
+       "value": "D55E00"
+      },
+      {
+       "type": "0",
+       "name": "legend_lines",
+       "value": "2"
+      }
+     ]
+    },
+    {
+     "widgetid": "68147",
+     "type": "svggraph",
+     "name": "Allowlist pass rate: never-blockable sources (RFC1918, CGNAT, operator egress IPs)",
+     "x": "0",
+     "y": "20",
+     "width": "36",
+     "height": "7",
+     "view_mode": "0",
+     "fields": [
+      {
+       "type": "1",
+       "name": "reference",
+       "value": "NGDAE"
+      },
+      {
+       "type": "1",
+       "name": "ds.0.hosts.0",
+       "value": "devops-hive-node-2"
+      },
+      {
+       "type": "1",
+       "name": "ds.0.items.0",
+       "value": "nodeguard allowlist pass rate"
+      },
+      {
+       "type": "1",
+       "name": "ds.0.color",
+       "value": "0072B2"
+      },
+      {
+       "type": "1",
+       "name": "ds.1.hosts.0",
+       "value": "devops-hive-node-3"
+      },
+      {
+       "type": "1",
+       "name": "ds.1.items.0",
+       "value": "nodeguard allowlist pass rate"
+      },
+      {
+       "type": "1",
+       "name": "ds.1.color",
+       "value": "D55E00"
+      },
+      {
+       "type": "0",
+       "name": "legend_lines",
+       "value": "2"
+      }
+     ]
+    },
+    {
+     "widgetid": "68148",
+     "type": "svggraph",
+     "name": "WireGuard pass rate: tailscale tunnel traffic (hard-passed before any lookup)",
+     "x": "36",
+     "y": "20",
+     "width": "36",
+     "height": "7",
+     "view_mode": "0",
+     "fields": [
+      {
+       "type": "1",
+       "name": "reference",
+       "value": "NGDAF"
+      },
+      {
+       "type": "1",
+       "name": "ds.0.hosts.0",
+       "value": "devops-hive-node-2"
+      },
+      {
+       "type": "1",
+       "name": "ds.0.items.0",
+       "value": "nodeguard WireGuard pass rate"
+      },
+      {
+       "type": "1",
+       "name": "ds.0.color",
+       "value": "0072B2"
+      },
+      {
+       "type": "1",
+       "name": "ds.1.hosts.0",
+       "value": "devops-hive-node-3"
+      },
+      {
+       "type": "1",
+       "name": "ds.1.items.0",
+       "value": "nodeguard WireGuard pass rate"
+      },
+      {
+       "type": "1",
+       "name": "ds.1.color",
+       "value": "D55E00"
+      },
+      {
+       "type": "0",
+       "name": "legend_lines",
+       "value": "2"
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
