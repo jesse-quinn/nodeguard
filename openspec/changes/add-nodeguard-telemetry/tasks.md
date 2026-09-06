@@ -252,7 +252,7 @@ and any restart reloads it.
       observed live)
 - [x] 3.13 Gate: ng.prog_match=1 and the stats2 template items flip to
       supported within one poll cycle
-- [ ] 3.14 Gate: 24h soak on node-3, then repeat 3.8 to 3.13 on node-2
+- [x] 3.14 Gate: 24h soak on node-3, then repeat 3.8 to 3.13 on node-2
 
 ## 4. Phase 4: dashboards
 
