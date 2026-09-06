@@ -359,6 +359,15 @@ def cmd_sweep(_a):
     top_txt = ",".join(f"{c}:{d}:{hits_now.get(c, d)}"
                        for c, d in top) or "none"
     top1 = top[0][1] if top else 0
+    # ready-to-display leaderboard rows for the dashboard (one item each)
+    rank_lines = []
+    for i in range(5):
+        if i < len(top):
+            c, d = top[i]
+            rank_lines.append(f"ng.top_blocked_{i + 1}={c}  {d} new "
+                              f"({hits_now.get(c, d)} total)")
+        else:
+            rank_lines.append(f"ng.top_blocked_{i + 1}=-")
     caps = _spec_max_entries()
     walk_ms = int((time.monotonic() - walk_start) * 1000)
     lines = [
@@ -369,7 +378,7 @@ def cmd_sweep(_a):
         f"ng.top_blocked={top_txt}",
         f"ng.sweep_walk_ms={walk_ms}",
         f"ng.sweep_ts={int(time.time())}",
-    ]
+    ] + rank_lines
     if caps.get("block4"):
         lines.append(f"ng.util_v4_pct={100 * counts[4] // caps['block4']}")
     if caps.get("block6"):

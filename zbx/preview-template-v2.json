@@ -1911,6 +1911,236 @@
       ]
      },
      {
+      "uuid": "9a6238a6a1d445d6a4bab86d5afc7a6e",
+      "name": "top blocked source #1",
+      "type": "DEPENDENT",
+      "key": "nodeguard.kv[top_blocked_1]",
+      "delay": "0",
+      "value_type": "CHAR",
+      "description": "rank 1 blocked source by hits since the last sweep walk",
+      "history": "31d",
+      "trends": "180d",
+      "master_item": {
+       "key": "nodeguard.kv.raw"
+      },
+      "preprocessing": [
+       {
+        "type": "REGEX",
+        "parameters": [
+         "(?m)^ng\\.top_blocked_1=(.+)$",
+         "\\1"
+        ]
+       }
+      ]
+     },
+     {
+      "uuid": "d1f80307719849789898110d2e692d1c",
+      "name": "top blocked source #2",
+      "type": "DEPENDENT",
+      "key": "nodeguard.kv[top_blocked_2]",
+      "delay": "0",
+      "value_type": "CHAR",
+      "description": "rank 2 blocked source by hits since the last sweep walk",
+      "history": "31d",
+      "trends": "180d",
+      "master_item": {
+       "key": "nodeguard.kv.raw"
+      },
+      "preprocessing": [
+       {
+        "type": "REGEX",
+        "parameters": [
+         "(?m)^ng\\.top_blocked_2=(.+)$",
+         "\\1"
+        ]
+       }
+      ]
+     },
+     {
+      "uuid": "d08d98611a594df6880985ac6fcbe7d7",
+      "name": "top blocked source #3",
+      "type": "DEPENDENT",
+      "key": "nodeguard.kv[top_blocked_3]",
+      "delay": "0",
+      "value_type": "CHAR",
+      "description": "rank 3 blocked source by hits since the last sweep walk",
+      "history": "31d",
+      "trends": "180d",
+      "master_item": {
+       "key": "nodeguard.kv.raw"
+      },
+      "preprocessing": [
+       {
+        "type": "REGEX",
+        "parameters": [
+         "(?m)^ng\\.top_blocked_3=(.+)$",
+         "\\1"
+        ]
+       }
+      ]
+     },
+     {
+      "uuid": "1cc4d451c402457b825133152a10381f",
+      "name": "top blocked source #4",
+      "type": "DEPENDENT",
+      "key": "nodeguard.kv[top_blocked_4]",
+      "delay": "0",
+      "value_type": "CHAR",
+      "description": "rank 4 blocked source by hits since the last sweep walk",
+      "history": "31d",
+      "trends": "180d",
+      "master_item": {
+       "key": "nodeguard.kv.raw"
+      },
+      "preprocessing": [
+       {
+        "type": "REGEX",
+        "parameters": [
+         "(?m)^ng\\.top_blocked_4=(.+)$",
+         "\\1"
+        ]
+       }
+      ]
+     },
+     {
+      "uuid": "7a35c99cc83c482ba6062038536a710b",
+      "name": "top blocked source #5",
+      "type": "DEPENDENT",
+      "key": "nodeguard.kv[top_blocked_5]",
+      "delay": "0",
+      "value_type": "CHAR",
+      "description": "rank 5 blocked source by hits since the last sweep walk",
+      "history": "31d",
+      "trends": "180d",
+      "master_item": {
+       "key": "nodeguard.kv.raw"
+      },
+      "preprocessing": [
+       {
+        "type": "REGEX",
+        "parameters": [
+         "(?m)^ng\\.top_blocked_5=(.+)$",
+         "\\1"
+        ]
+       }
+      ]
+     },
+     {
+      "uuid": "a7831352e3b54841993da375d09248ce",
+      "name": "top attacker country #1",
+      "type": "DEPENDENT",
+      "key": "nodeguard.kv[geo_country_1]",
+      "delay": "0",
+      "value_type": "CHAR",
+      "description": "rank 1 attacker country by dropped-packet volume",
+      "history": "31d",
+      "trends": "180d",
+      "master_item": {
+       "key": "nodeguard.kv.raw"
+      },
+      "preprocessing": [
+       {
+        "type": "REGEX",
+        "parameters": [
+         "(?m)^ng\\.geo_country_1=(.+)$",
+         "\\1"
+        ]
+       }
+      ]
+     },
+     {
+      "uuid": "933daa1005fa4f0fb0f6b7f0a9a0e6b8",
+      "name": "top attacker country #2",
+      "type": "DEPENDENT",
+      "key": "nodeguard.kv[geo_country_2]",
+      "delay": "0",
+      "value_type": "CHAR",
+      "description": "rank 2 attacker country by dropped-packet volume",
+      "history": "31d",
+      "trends": "180d",
+      "master_item": {
+       "key": "nodeguard.kv.raw"
+      },
+      "preprocessing": [
+       {
+        "type": "REGEX",
+        "parameters": [
+         "(?m)^ng\\.geo_country_2=(.+)$",
+         "\\1"
+        ]
+       }
+      ]
+     },
+     {
+      "uuid": "f5608856619e45c78693075691f297da",
+      "name": "top attacker country #3",
+      "type": "DEPENDENT",
+      "key": "nodeguard.kv[geo_country_3]",
+      "delay": "0",
+      "value_type": "CHAR",
+      "description": "rank 3 attacker country by dropped-packet volume",
+      "history": "31d",
+      "trends": "180d",
+      "master_item": {
+       "key": "nodeguard.kv.raw"
+      },
+      "preprocessing": [
+       {
+        "type": "REGEX",
+        "parameters": [
+         "(?m)^ng\\.geo_country_3=(.+)$",
+         "\\1"
+        ]
+       }
+      ]
+     },
+     {
+      "uuid": "212e0dd128f24348aa681e680512d5de",
+      "name": "top attacker country #4",
+      "type": "DEPENDENT",
+      "key": "nodeguard.kv[geo_country_4]",
+      "delay": "0",
+      "value_type": "CHAR",
+      "description": "rank 4 attacker country by dropped-packet volume",
+      "history": "31d",
+      "trends": "180d",
+      "master_item": {
+       "key": "nodeguard.kv.raw"
+      },
+      "preprocessing": [
+       {
+        "type": "REGEX",
+        "parameters": [
+         "(?m)^ng\\.geo_country_4=(.+)$",
+         "\\1"
+        ]
+       }
+      ]
+     },
+     {
+      "uuid": "0ef7127f594b41b3afa3b21106899f98",
+      "name": "top attacker country #5",
+      "type": "DEPENDENT",
+      "key": "nodeguard.kv[geo_country_5]",
+      "delay": "0",
+      "value_type": "CHAR",
+      "description": "rank 5 attacker country by dropped-packet volume",
+      "history": "31d",
+      "trends": "180d",
+      "master_item": {
+       "key": "nodeguard.kv.raw"
+      },
+      "preprocessing": [
+       {
+        "type": "REGEX",
+        "parameters": [
+         "(?m)^ng\\.geo_country_5=(.+)$",
+         "\\1"
+        ]
+       }
+      ]
+     },
+     {
       "uuid": "7c453bd6cb8d4ea4b30e69c30ef927fd",
       "name": "nodeguard blocks v4",
       "type": "DEPENDENT",

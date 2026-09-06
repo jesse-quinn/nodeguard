@@ -98,6 +98,8 @@ DOCUMENTED_KV_FIELDS = {
     "feeds_map_errors", "feeds_last_success_ts_min",
     "geo_summary", "geo_sources_hitting", "geo_located",
     "geo_countries",
+    "top_blocked_1", "top_blocked_2", "top_blocked_3", "top_blocked_4", "top_blocked_5",
+    "geo_country_1", "geo_country_2", "geo_country_3", "geo_country_4", "geo_country_5",
     "feeds_last_success_ts_spamhaus_drop_v4",
     "feeds_snapshot_age_spamhaus_drop_v4",
     "feeds_last_success_ts_spamhaus_drop_v6",

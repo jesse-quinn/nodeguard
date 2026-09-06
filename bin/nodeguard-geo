@@ -188,9 +188,14 @@ def main():
         f"ng.geo_located={located}",
         f"ng.geo_countries={len(countries)}",
     ]
-    for i, (cc, n) in enumerate(ranked[:5]):
-        lines.append(f"ng.geo_top{i + 1}_country={cc}")
-        lines.append(f"ng.geo_top{i + 1}_hits={n}")
+    for i in range(5):
+        if i < len(ranked):
+            cc, n = ranked[i]
+            lines.append(f"ng.geo_top{i + 1}_country={cc}")
+            lines.append(f"ng.geo_top{i + 1}_hits={n}")
+            lines.append(f"ng.geo_country_{i + 1}={cc}  {n} drops")
+        else:
+            lines.append(f"ng.geo_country_{i + 1}=-")
     # a compact one-line summary for a text tile
     summary = " ".join(f"{cc}:{n}" for cc, n in ranked[:6]) or "none"
     lines.append(f"ng.geo_summary={summary}")
