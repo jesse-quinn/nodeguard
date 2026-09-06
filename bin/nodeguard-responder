@@ -43,10 +43,12 @@ ALLOW_CACHE_TTL = 60
 
 
 def log(msg):
+    """Print a line to stdout and flush immediately so journald captures it in order."""
     print(msg, flush=True)
 
 
 def load_conf():
+    """Load and validate responder.conf, parsing HOME_NETS into networks and exiting fatally if it is empty or malformed."""
     conf = {
         "ENFORCE": "no",
         "EVE": "/var/log/suricata/eve.json",
@@ -88,6 +90,7 @@ def load_conf():
 
 
 def load_sids(path):
+    """Parse sids.conf into the opt-in, ignore, and udp-ok SID sets that tune which alerts qualify for a block."""
     optin, ignore, udp_ok = set(), set(), set()
     try:
         with open(path) as f:
@@ -119,11 +122,13 @@ class AllowCache:
     fails toward NOT blocking."""
 
     def __init__(self):
+        """Start with an empty, unfetched allow-map cache."""
         self.nets = None
         self.fetched = 0.0
 
     def protected(self, ip_str):
-        """True if protected, False if blockable, None if undeterminable."""
+        """Report whether an address is covered by the live allow maps, refreshing the cache on its TTL.
+        True if protected, False if blockable, None if undeterminable."""
         now = time.monotonic()
         if self.nets is None or now - self.fetched > ALLOW_CACHE_TTL:
             try:
@@ -154,6 +159,7 @@ class Journal:
     the current (real or shadow) window."""
 
     def __init__(self, path):
+        """Load the per-IP offense journal from disk, quarantining a corrupt file and starting fresh rather than crashing."""
         self.path = path
         self.data = {}
         try:
@@ -178,12 +184,14 @@ class Journal:
         self.prune()
 
     def prune(self):
+        """Drop journal records not seen in 30 days and persist, keeping the file bounded."""
         cutoff = time.time() - 30 * 86400
         self.data = {ip: rec for ip, rec in self.data.items()
                      if rec.get("last_seen", 0) >= cutoff}
         self.save()
 
     def save(self):
+        """Persist the journal to disk atomically (temp file then rename)."""
         tmp = self.path + ".tmp"
         os.makedirs(os.path.dirname(self.path), exist_ok=True)
         with open(tmp, "w") as f:
@@ -191,6 +199,7 @@ class Journal:
         os.replace(tmp, self.path)
 
     def _rec(self, ip):
+        """Return (creating if needed) the mutable journal record for one IP."""
         return self.data.setdefault(
             ip, {"count": 0, "shadow_hits": 0, "blocked_until": 0,
                  "first_seen": time.time()})
@@ -258,6 +267,7 @@ def follow(path):
 
 
 def main():
+    """Tail eve.json forever and drive every qualifying alert through the seven gates into a block (or a dry-run WOULD BLOCK); the responder's event loop."""
     conf = load_conf()
     enforce = conf["ENFORCE"].lower() == "yes"
     ttl_base = int(conf["TTL"])
@@ -287,6 +297,7 @@ def main():
     sec_last_flush = 0.0
 
     def flush_sec():
+        """Write the security-telemetry kv file, rate-limited to at most once every 15s to avoid an fsync storm."""
         nonlocal sec_dirty, sec_last_flush
         if not sec_dirty or time.time() - sec_last_flush < 15:
             return

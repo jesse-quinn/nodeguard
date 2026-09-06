@@ -17,6 +17,10 @@ RESULT="$NG_RUN/canary_result"
 CONFIRM="$NG_RUN/confirmed"
 rm -f "$RESULT" "$CONFIRM"
 
+# Prove the node still has working connectivity after an attach: ping the
+# office gateway and a public resolver, retrying for up to 60 s so a link
+# still renegotiating is not recorded as a failure. Returns 0 once both
+# succeed, 1 if the window expires.
 self_check() {
     # Gate on link state, then retry connectivity for up to 60 s: judging
     # after a fixed short sleep records false failures during renegotiation.
@@ -31,6 +35,10 @@ self_check() {
     return 1
 }
 
+# One full attach-and-verify try: start nodeguard-xdp, confirm the unit is
+# active, run self_check for connectivity, and assert the live WireGuard
+# port matches config[0]. Records the outcome (or the specific failure) in
+# $RESULT and stops nodeguard-xdp on any failure so the node self-recovers.
 attempt() {
     systemctl start nodeguard-xdp.service
     if ! systemctl is-active --quiet nodeguard-xdp.service; then

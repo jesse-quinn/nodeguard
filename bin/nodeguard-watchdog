@@ -180,13 +180,21 @@ fi
 # Nothing to guard before the maps exist.
 [ -e "$NG_PIN/config" ] || exit 0
 
+# Read a named watchdog counter (consecutive-failure tallies persisted
+# across cycles under $NG_RUN), printing 0 when the file does not exist.
 counter() { cat "$NG_RUN/wd_$1" 2>/dev/null || echo 0; }
+# Write a named watchdog counter to the given value.
 set_counter() { echo "$2" > "$NG_RUN/wd_$1"; }
 
+# Report which latch is holding enforcement off: "manual" if an operator
+# set it, otherwise "watchdog". Used only for log wording.
 latched_by() {
     if [ -f "$NG_RUN/manual_off" ]; then echo manual; else echo watchdog; fi
 }
 
+# Emit a crit-level reminder at most once an hour, tracking the last send
+# time in a run-file. Keeps a persistent OFF/latched condition visible in
+# the journal without spamming it every minute.
 remind_hourly() {
     local msg="$1" last now
     last=$(cat "$NG_RUN/wd_last_remind" 2>/dev/null || echo 0)
@@ -197,6 +205,9 @@ remind_hourly() {
     fi
 }
 
+# Disable enforcement the gentle way (set the kill switch via
+# nodeguard-off), and if that write fails, fall all the way back to
+# detaching the XDP program so the datapath opens regardless.
 # SAFETY: soft-off that never lies - if the kill-switch write fails,
 # escalate straight to the fail-open action the soft-off could not
 # deliver.
@@ -219,11 +230,16 @@ if [ -n "$live_port" ] && [ -n "$cfg_port" ] && [ "$live_port" != "$cfg_port" ];
 fi
 
 # --- probes ---
+# Lifeline probe: the default gateway answers a ping. Returns nonzero if
+# no default route exists or the ping fails.
 probe_gw() {
     local gw
     gw=$(ip -4 route show default 2>/dev/null | awk '{print $3; exit}')
     [ -n "$gw" ] && ping -c1 -W2 "$gw" >/dev/null 2>&1
 }
+# Lifeline probe: a hand-built DNS query to Quad9 (9.9.9.9) gets a reply.
+# Uses a raw UDP packet rather than a resolver so it tests reachability,
+# not local resolver configuration.
 probe_dns() {
     python3 - <<'PYEOF' >/dev/null 2>&1
 import socket, struct, sys
@@ -238,6 +254,8 @@ data, _ = s.recvfrom(512)
 sys.exit(0 if len(data) > 12 else 1)
 PYEOF
 }
+# Lifeline probe: tailscaled reports this node as Online in its own
+# status. Confirms the management overlay is up, not just the local link.
 probe_tailscale() {
     tailscale status --json 2>/dev/null | python3 -c '
 import json, sys
@@ -245,12 +263,17 @@ d = json.load(sys.stdin)
 sys.exit(0 if d.get("Self", {}).get("Online") else 1)
 ' 2>/dev/null
 }
+# Lifeline probe: the office gateway answers a ping.
 probe_officegw() {
     # SAFETY: fails when OFFICE_GW is unset - the conservative,
     # fail-open-blocking direction (a misconfigured host never auto
     # re-arms).
     [ -n "${OFFICE_GW:-}" ] && ping -c1 -W2 "$OFFICE_GW" >/dev/null 2>&1
 }
+# Over-block detector: open a TCP connection to the deliberately
+# NON-allowlisted canary target. Success means nodeguard is not
+# over-blocking; repeated failure while lifelines pass is the signal the
+# watchdog acts on.
 probe_canary() {
     python3 - "$CANARY_IP" "${CANARY_PORT:-443}" <<'PYEOF' >/dev/null 2>&1
 import socket, sys

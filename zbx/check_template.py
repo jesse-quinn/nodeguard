@@ -110,18 +110,24 @@ LLD_FEED_RE = re.compile(
 
 
 class Checker:
+    """Tallies check results and prints a PASS or FAIL line for each."""
+
     def __init__(self):
+        """Start with zero recorded failures."""
         self.failures = 0
 
     def ok(self, label):
+        """Record a passing check by printing a PASS line."""
         print("PASS %s" % label)
 
     def fail(self, label, detail):
+        """Record a failing check: bump the failure count and print FAIL."""
         self.failures += 1
         print("FAIL %s: %s" % (label, detail))
 
 
 def load_template(path):
+    """Read a generated template JSON file and return its zabbix_export."""
     with open(path) as fh:
         doc = json.load(fh)
     return doc["zabbix_export"]
@@ -180,12 +186,15 @@ def load_removed(path):
 
 
 def walk_items(exp):
+    """Yield every item across all templates in the export."""
     for t in exp.get("templates", []):
         for it in t.get("items", []):
             yield it
 
 
 def walk_triggers(exp):
+    """Yield every trigger in the export: those attached to items first,
+    then the top-level multi-item triggers."""
     for it in walk_items(exp):
         for tr in it.get("triggers", []):
             yield tr
@@ -194,6 +203,7 @@ def walk_triggers(exp):
 
 
 def discovery_rules(exp):
+    """Yield every discovery rule across all templates in the export."""
     for t in exp.get("templates", []):
         for dr in t.get("discovery_rules", []):
             yield dr
@@ -377,6 +387,9 @@ def check_keys(c, exp):
 
 
 def main():
+    """Command-line entry point: load the generated template, baseline,
+    and sample, run all four checks (regex extraction, v1 names, uuid
+    carry-over, kv surface), and return nonzero if any check failed."""
     ap = argparse.ArgumentParser(
         description="Assert the generated nodeguard template preserves "
                     "v1 names and uuids, extracts every field from a "

@@ -9,18 +9,28 @@ NG_OBJ="$NG_LIB/nodeguard_kern.o"
 NG_SPEC="$NG_LIB/nodeguard-maps.spec"
 NG_MAP="$NG_LIB/ngmap.py"
 
+# Log one message to both the system journal (tagged "nodeguard" at the
+# given syslog level, default info) and stderr, so every CLI and unit
+# reports through one consistent path. Second argument is the level.
 ng_log() {
     logger -t nodeguard -p "daemon.${2:-info}" -- "$1"
     echo "$1" >&2
 }
 
+# Load the shared environment file (interface name, canary target, lifeline
+# list, and so on) and fail immediately if IFACE is not set, since every
+# tool here operates on a specific network interface.
 ng_env() {
     # shellcheck disable=SC1090
     [ -f "$NG_ENV" ] && . "$NG_ENV"
     : "${IFACE:?IFACE not set in $NG_ENV}"
 }
 
+# Read one config-map slot (by index) through the Python map helper. Slot 0
+# is the WireGuard port, slot 1 the kill switch, slot 2 the re-arm flag.
 ng_cfg_get() { python3 "$NG_MAP" get-config "$1"; }
+# Write one config-map slot (by index) to the given value through the
+# Python map helper.
 ng_cfg_set() { python3 "$NG_MAP" set-config "$1" "$2"; }
 
 # Program ids of nodeguard members currently in this interface's dispatcher.
@@ -58,6 +68,10 @@ ng_live_wg_port() {
     printf '%s\n' "$ports" | head -1
 }
 
+# Confirm that a loaded XDP program is really enforcing against the maps
+# we manage, by checking each map id the program holds against the pinned
+# map of the same name; returns 0 only if they all agree. This is the
+# guard that stops nodeguard blessing a program bound to orphaned maps.
 # INVARIANT (ADR 0007): identity is generalized so additive maps roll
 # out hitlessly in BOTH directions: every map the program references
 # that has a pin of the same name under $NG_PIN must carry that pin's
@@ -107,6 +121,9 @@ sys.exit(0 if ok else 1)
 IDPY
 }
 
+# Check that every map named in the installed spec has a matching pin
+# under $NG_PIN, returning 0 only when all are present. Callers use it as
+# a precondition before loading the program.
 # SAFETY (ADR 0007): refuse to load when the installed spec lists a map
 # with no pin: precisely "create-maps has not run for this object
 # version". Prevents libbpf silently auto-pinning outside the spec

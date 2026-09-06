@@ -150,6 +150,9 @@ struct {
 	__uint(pinning, LIBBPF_PIN_BY_NAME);
 } stats2 SEC(".maps");
 
+// Bumps one slot of the per-CPU stats map (the verdict counters:
+// pass, the two drop counters, allowlist, WireGuard-port, and so on). A
+// missing slot is silently skipped, so counting never affects a verdict.
 static __always_inline void count(__u32 idx)
 {
 	__u64 *v = bpf_map_lookup_elem(&stats, &idx);
@@ -157,6 +160,9 @@ static __always_inline void count(__u32 idx)
 		(*v)++;
 }
 
+// Bumps one slot of the per-CPU stats2 map, the count-only
+// protocol-sanity telemetry (scan fingerprints, low TTL, fragments).
+// Like count(), a missing slot is a no-op and never changes a verdict.
 static __always_inline void count2(__u32 idx)
 {
 	__u64 *v = bpf_map_lookup_elem(&stats2, &idx);
@@ -164,6 +170,10 @@ static __always_inline void count2(__u32 idx)
 		(*v)++;
 }
 
+// Looks at a TCP header for the classic stateless scan fingerprints
+// (SYN+FIN, SYN+RST, NULL, XMAS) and bumps the matching telemetry
+// counter. Pure observation on the decision path: it records what it
+// sees and returns, never influencing whether the packet passes or drops.
 // SAFETY: count-only. At most one flag-combination counter per packet;
 // a bounds failure on the TCP header is not a parse failure of the
 // packet (the IP header was fine) and simply skips the flag counters.
@@ -191,6 +201,11 @@ struct vlan_hdr {
 // The attach points carry untagged traffic today; one 802.1Q header is
 // parsed and skipped so a tagged frame is judged on its real payload
 // rather than passing as non-IP.
+// Runs the full per-packet decision for one IPv4 packet. It bounds-checks
+// the IP header (fail open on truncation), advances the count-only sanity
+// counters, obeys the kill switch, hard-passes tailscaled's WireGuard UDP
+// port, passes any allowlisted source, and only then drops an unexpired
+// blocklist hit; every other outcome returns XDP_PASS.
 static __always_inline int handle_v4(void *nh, void *data_end, __u64 wg_port,
 				     __u64 kill_switch)
 {
@@ -269,6 +284,11 @@ static __always_inline int handle_v4(void *nh, void *data_end, __u64 wg_port,
 	return XDP_DROP;
 }
 
+// Runs the per-packet decision for one IPv6 packet, mirroring handle_v4:
+// header bounds check, sanity counters, kill switch, WireGuard-port pass,
+// allowlist, then a drop only on an unexpired blocklist hit. Extension
+// headers are not walked, so only a directly following UDP header can
+// match the WireGuard pass.
 static __always_inline int handle_v6(void *nh, void *data_end, __u64 wg_port,
 				     __u64 kill_switch)
 {
@@ -334,6 +354,10 @@ struct {
 	__uint(XDP_PASS, 1);
 } XDP_RUN_CONFIG(nodeguard);
 
+// XDP entry point the kernel runs on every received packet. It parses the
+// Ethernet header (skipping one optional 802.1Q VLAN tag), passes any
+// non-IP frame, reads the kill-switch and WireGuard-port config once, then
+// hands IPv4 to handle_v4 and IPv6 to handle_v6 to produce the verdict.
 SEC("xdp")
 int nodeguard(struct xdp_md *ctx)
 {

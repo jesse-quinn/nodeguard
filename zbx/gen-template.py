@@ -51,6 +51,7 @@ NODEGUARD_NS = uuid.uuid5(uuid.NAMESPACE_DNS, "nodeguard.zbx.template")
 
 
 def kv_key(field):
+    """Build the Zabbix item key for one kv field: nodeguard.kv[<field>]."""
     return "nodeguard.kv[%s]" % field
 
 
@@ -67,11 +68,16 @@ def rx(field):
 
 
 def trig(name, expression, priority, description):
+    """Build one trigger definition dict (name, expression, priority,
+    description) for later rendering with a carried or minted uuid."""
     return {"name": name, "expression": expression,
             "priority": priority, "description": description}
 
 
 def feed_triggers(feed):
+    """Return the two staleness triggers for one threat feed: a warning
+    after two missed refresh cycles and an average-severity failed-open
+    once its entries have decayed out of the kernel."""
     succ = iref(kv_key("feeds_last_success_ts_%s" % feed))
     return [
         trig("nodeguard feed %s stale on {HOST.NAME}" % feed,
@@ -87,6 +93,8 @@ def feed_triggers(feed):
 
 
 def feed_frozen_trigger(feed):
+    """Return the trigger that warns when a feed's upstream content has not
+    changed in 7 days (a stalled source, ahead of the 14-day hard stop)."""
     age = iref(kv_key("feeds_snapshot_age_%s" % feed))
     return trig("nodeguard feed %s upstream frozen on {HOST.NAME}" % feed,
                 "last(%s)>604800" % age, "WARNING",
@@ -117,6 +125,9 @@ def rate_twin(field, name, desc, trends="90d", triggers=()):
 # ---------------------------------------------------------------------------
 
 def build_rows():
+    """Build the full ordered list of dependent-item table rows, v1 items
+    first (names byte-for-byte) then the new v2 telemetry, each row carrying
+    its name, value type, retention, rate flag, and any triggers."""
     rows = []
 
     # --- carried from v1, in v1 order -------------------------------------
@@ -594,6 +605,9 @@ def build_rows():
 
 # Triggers that reference more than one item live at export top level.
 def build_multi_item_triggers():
+    """Return the triggers whose expressions span more than one item, so
+    they are attached at the export's top level rather than to any single
+    item (for example stats unreadable, degraded attach mode)."""
     return [
         trig("nodeguard stats unreadable on {HOST.NAME}",
              "last(%s)=1 or nodata(%s,10m)=1"
@@ -647,6 +661,9 @@ LLD_JS = (
 
 
 def build_discovery_rule():
+    """Return the low-level discovery rule that finds each configured feed
+    from the kv export and, per feed, creates a last-success item, a
+    snapshot-age item, and their staleness triggers."""
     succ_key = "nodeguard.feed.success_ts[{#FEED}]"
     age_key = "nodeguard.feed.age[{#FEED}]"
     succ = iref(succ_key)
@@ -722,6 +739,10 @@ def build_discovery_rule():
 # ---------------------------------------------------------------------------
 
 def load_uuid_maps(committed_path):
+    """Read the committed v1 template and index every existing object's uuid
+    by its natural key (groups and templates by name, items by key, triggers
+    by name, discovery rules and prototypes), so the render can carry each
+    uuid over verbatim."""
     with open(committed_path) as fh:
         v1 = json.load(fh)
     exp = v1["zabbix_export"]
@@ -762,6 +783,8 @@ def make_uuid(maps, kind, mapname, obj_key):
 
 
 def render_trigger(maps, t, mapname="triggers", kind="trigger"):
+    """Render one trigger definition into its export dict, attaching the
+    carried-over or newly minted uuid."""
     return {
         "uuid": make_uuid(maps, kind, mapname, t["name"]),
         "name": t["name"],
@@ -772,6 +795,9 @@ def render_trigger(maps, t, mapname="triggers", kind="trigger"):
 
 
 def render_item(maps, r):
+    """Render one table row into a dependent-item export dict: uuid, key,
+    the master-item link, the field-extraction regex (plus a
+    CHANGE_PER_SECOND step for rate items), and any triggers."""
     key = kv_key(r["field"])
     field = r["rate_of"] or r["field"]
     d = {
@@ -798,6 +824,8 @@ def render_item(maps, r):
 
 
 def render_master(maps):
+    """Render the single master item (the whole kv export polled once) that
+    every other item depends on."""
     return {
         "uuid": make_uuid(maps, "item", "items", MASTER_KEY),
         "name": "nodeguard kv raw",
@@ -814,6 +842,8 @@ def render_master(maps):
 
 
 def render_discovery(maps):
+    """Render the feed discovery rule and its item and trigger prototypes
+    into their export dicts, carrying uuids over where they already exist."""
     src = build_discovery_rule()
     rule = {
         "uuid": make_uuid(maps, "discovery", "discovery", src["key"]),
@@ -854,6 +884,10 @@ def render_discovery(maps):
 
 
 def render(committed_path):
+    """Assemble the complete v2 zabbix_export dict: template group,
+    template with its master item, all dependent items, the discovery rule,
+    and the top-level multi-item triggers, every uuid carried from the
+    committed v1 where the object already existed."""
     maps = load_uuid_maps(committed_path)
     items = [render_master(maps)]
     items += [render_item(maps, r) for r in build_rows()]
@@ -891,6 +925,9 @@ def render(committed_path):
 
 
 def main():
+    """Command-line entry point: render the v2 template from the committed
+    baseline, write it to --out as deterministic JSON, and print an item,
+    trigger, and discovery-prototype count summary."""
     ap = argparse.ArgumentParser(
         description="Render the nodeguard Zabbix template v2 "
                     "deterministically, carrying every committed uuid "

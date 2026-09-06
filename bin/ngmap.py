@@ -56,11 +56,13 @@ NEVER_BLOCK = [ipaddress.ip_network(n) for n in (
 
 
 def die(msg, code=1):
+    """Print an error prefixed with the tool name to stderr and exit; the single failure path shared by every command in this file."""
     print(f"ngmap: {msg}", file=sys.stderr)
     sys.exit(code)
 
 
 def bpftool(*args, parse_json=False):
+    """Run the bpftool binary and return its output; the one place this file shells out to the kernel's BPF map tooling."""
     cmd = [BPFTOOL] + (["-j"] if parse_json else []) + list(args)
     try:
         r = subprocess.run(cmd, capture_output=True, text=True)
@@ -72,10 +74,12 @@ def bpftool(*args, parse_json=False):
 
 
 def mono_ns():
+    """Return the current CLOCK_MONOTONIC time in nanoseconds, the clock base for every block-map expiry value."""
     return time.clock_gettime_ns(time.CLOCK_MONOTONIC)
 
 
 def parse_net(text):
+    """Parse operator-supplied text into an IP network (a bare address becomes a host route), dying with a clear message if it is not valid."""
     try:
         return ipaddress.ip_network(text, strict=False)
     except ValueError as e:
@@ -83,15 +87,18 @@ def parse_net(text):
 
 
 def key_bytes(net):
+    """Encode an IP network into the packed LPM map key bytes the kernel expects (prefix length followed by the address)."""
     addr = net.network_address.packed
     return struct.pack("<I", net.prefixlen) + addr
 
 
 def bytes_to_args(b):
+    """Turn a byte string into the list of 0xNN hex tokens bpftool takes on its command line."""
     return [f"0x{x:02x}" for x in b]
 
 
 def args_to_bytes(hexlist):
+    """Turn bpftool's list of hex string tokens back into a Python byte string; the inverse of bytes_to_args."""
     return bytes(int(x, 16) for x in hexlist)
 
 
@@ -128,10 +135,12 @@ def lookup_value(path, key):
 
 
 def map_path(net, kind):
+    """Return the pinned-map filesystem path for a given map kind and a network's address family (e.g. block4 versus block6)."""
     return f"{PIN}/{kind}{4 if net.version == 4 else 6}"
 
 
 def decode_key(raw):
+    """Decode packed LPM map key bytes back into an IP network; the inverse of key_bytes, used when reading maps."""
     prefixlen = struct.unpack("<I", raw[:4])[0]
     addr = ipaddress.ip_address(raw[4:])
     return ipaddress.ip_network(f"{addr}/{prefixlen}", strict=False)
@@ -155,11 +164,13 @@ def dump_map(path):
 
 
 def update_map(path, key, value):
+    """Insert or overwrite one entry in a pinned map via bpftool."""
     bpftool("map", "update", "pinned", path, "key", *bytes_to_args(key),
             "value", *bytes_to_args(value))
 
 
 def delete_key(path, key):
+    """Delete one entry from a pinned map, tolerating an already-absent key while still distinguishing that from an unpinned map."""
     try:
         bpftool("map", "delete", "pinned", path, "key", *bytes_to_args(key))
     except RuntimeError as e:
@@ -174,6 +185,7 @@ def delete_key(path, key):
 
 
 def load_allow_files(files):
+    """Read one or more allow-list text files (comments stripped) into a list of parsed networks."""
     nets = []
     for path in files:
         try:
@@ -188,6 +200,7 @@ def load_allow_files(files):
 
 
 def allow_entries_live():
+    """Return every network currently present in the live allow4/allow6 maps, the runtime snapshot of the allowlist."""
     nets = []
     for path in (f"{PIN}/allow4", f"{PIN}/allow6"):
         for k, _ in dump_map(path):
@@ -207,6 +220,7 @@ def contains_protected(net, extra_nets=()):
 
 
 def is_protected(addr, extra_nets=()):
+    """Return a reason string if an address sits in a never-block range or a live allow entry, else None; the per-address guard against blocking something we must not."""
     ip = ipaddress.ip_address(addr)
     for net in NEVER_BLOCK:
         if net.version == ip.version and ip in net:
@@ -220,6 +234,7 @@ def is_protected(addr, extra_nets=()):
 # ---------------------------------------------------------------- commands
 
 def cmd_block(a):
+    """Add a block-map entry for a target after every safety refusal (over-broad prefix, protected range, allowlisted), the CLI block command."""
     net = parse_net(a.target)
     min_len = 8 if net.version == 4 else 32
     if net.prefixlen < min_len and not a.i_mean_it:
@@ -249,6 +264,7 @@ def cmd_block(a):
 
 
 def cmd_unblock(a):
+    """Remove one block-map entry for a target, reporting whether it had been blocked."""
     net = parse_net(a.target)
     if delete_key(map_path(net, "block"), key_bytes(net)):
         print(f"unblocked {net}")
@@ -257,6 +273,7 @@ def cmd_unblock(a):
 
 
 def cmd_list(a):
+    """List every current block entry with its remaining TTL and hit count, as text or JSON."""
     now = mono_ns()
     rows = []
     for ver in (4, 6):
@@ -279,6 +296,7 @@ def cmd_list(a):
 
 
 def cmd_flush(_a):
+    """Delete every entry from both block maps, the operator panic clear."""
     n = 0
     for ver in (4, 6):
         path = f"{PIN}/block{ver}"
@@ -369,6 +387,7 @@ def cmd_sweep(_a):
 
 
 def _percpu_totals(path, names):
+    """Sum a per-CPU counter map across all CPUs and label each slot by name; shared by the stats commands."""
     out = {}
     for k, vals in dump_map(path):
         idx = struct.unpack("<I", k)[0]
@@ -379,6 +398,7 @@ def _percpu_totals(path, names):
 
 
 def cmd_stats(a):
+    """Print the primary packet-decision counters (pass, drops, allowlist and WG-port hits) as text or JSON."""
     out = _percpu_totals(f"{PIN}/stats", STAT_NAMES)
     if a.json:
         print(json.dumps(out))
@@ -388,6 +408,7 @@ def cmd_stats(a):
 
 
 def cmd_stats2(a):
+    """Print the secondary malformed-packet counters (TCP flag anomalies, low TTL, fragments) as text or JSON."""
     out = _percpu_totals(f"{PIN}/stats2", STATS2_NAMES)
     if a.json:
         print(json.dumps(out))
@@ -397,6 +418,7 @@ def cmd_stats2(a):
 
 
 def _spec_max_entries():
+    """Read the installed map spec file to learn each map's configured capacity, used for the utilization percentages."""
     caps = {}
     try:
         with open(SPEC) as f:
@@ -411,6 +433,7 @@ def _spec_max_entries():
 
 
 def cmd_get_config(a):
+    """Print the value of one config-map slot (wg_port, kill switch, watchdog re-arm count)."""
     for k, v in dump_map(f"{PIN}/config"):
         if struct.unpack("<I", k)[0] == a.slot:
             print(struct.unpack("<Q", v)[0])
@@ -419,6 +442,7 @@ def cmd_get_config(a):
 
 
 def cmd_set_config(a):
+    """Write one config-map slot, range-checking the WireGuard port in slot 0."""
     if a.slot == 0 and not (1 <= a.value <= 65535):
         die(f"wg_port {a.value} out of range 1-65535")
     update_map(f"{PIN}/config", struct.pack("<I", a.slot),
@@ -426,6 +450,7 @@ def cmd_set_config(a):
 
 
 def cmd_allow_check(a):
+    """Report via exit code whether one address is protected, blockable, or undeterminable, for operator scripting."""
     # INVARIANT: exit 0 = protected, 1 = blockable, 3 = could not
     # determine (callers must fail toward NOT blocking on 3). No in-repo
     # caller today (the responder consumes allow-dump instead); the
@@ -441,10 +466,12 @@ def cmd_allow_check(a):
 
 
 def cmd_allow_dump(_a):
+    """Print the live allowlist as a JSON array of CIDRs, the interface the responder consumes."""
     print(json.dumps([str(n) for n in allow_entries_live()]))
 
 
 def cmd_create_maps(a):
+    """Create each pinned map from the spec file, or verify an existing pin matches the spec and refuse attach on any mismatch."""
     spec = []
     with open(a.spec) as f:
         for line in f:
@@ -492,6 +519,7 @@ def cmd_create_maps(a):
 
 
 def cmd_reconcile_allow(a):
+    """Reconcile the allow4/allow6 maps to match the static and generated allow files, adding, retagging, and removing entries as needed."""
     desired = {}  # (version, key_bytes) -> tag
     static_nets = load_allow_files(a.static)
     for net in static_nets:
@@ -526,6 +554,7 @@ def cmd_reconcile_allow(a):
 
 
 def main():
+    """Parse the subcommand and dispatch to its handler, the CLI entry point every nodeguard-* wrapper shells into."""
     p = argparse.ArgumentParser(prog="ngmap.py")
     sub = p.add_subparsers(dest="cmd", required=True)
 

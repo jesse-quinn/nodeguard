@@ -71,6 +71,9 @@ class Ctx:
 
     def __init__(self, api, groupid, hosts, patterns, explicit_patterns,
                  legend_url):
+        """Resolve and cache everything the dashboard builders share: the
+        API client, the fleet group and its member hosts, the graph host
+        patterns, the legend URL, and each host's item-key-to-itemid map."""
         self.api = api
         self.groupid = groupid
         self.hosts = hosts                    # [{hostid, host, name}]
@@ -121,6 +124,7 @@ class Ctx:
 
 
 def kv(field):
+    """Build the Zabbix item key for one kv field: nodeguard.kv[<field>]."""
     return "nodeguard.kv[%s]" % field
 
 
@@ -287,6 +291,9 @@ BUILDERS = [
 
 
 def print_plan(ctx, plans):
+    """Print the read-only plan: resolved hosts, host patterns, every
+    dashboard's widgets, the resolved and unresolved item keys, and any
+    warnings, without writing anything to the API."""
     print("== plan (no API writes; use --confirm to apply) ==")
     print("resolved hosts (%d):" % len(ctx.hosts))
     for h in ctx.hosts:
@@ -315,6 +322,8 @@ def print_plan(ctx, plans):
 
 
 def apply_dashboards(api, plans):
+    """Write each planned dashboard to Zabbix, updating it in place when one
+    of the same name already exists and creating it otherwise."""
     for name, widgets in plans:
         pages = [{"widgets": widgets}]
         existing = api.call("dashboard.get", {"filter": {"name": [name]}})
@@ -349,6 +358,9 @@ def export_legacy(api, out_path):
 
 
 def main():
+    """Command-line entry point: resolve the fleet group, build the
+    selected dashboards, then either print the plan (default) or apply them
+    to the API with --confirm; --rename-legacy exports the old dashboard."""
     ap = argparse.ArgumentParser(
         description="Generate the three NodeGuard dashboards. Default is "
                     "a read-only plan; --confirm applies.")

@@ -86,12 +86,15 @@ class RefSeq:
     """Unique widget reference strings (svggraph and pie require one)."""
 
     def __init__(self, prefix="NG"):
+        """Start an endless supply of reference strings, each the prefix
+        followed by three letters (NGAAA, NGAAB, ...)."""
         self._it = (prefix + a + b + c
                     for a in "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
                     for b in "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
                     for c in "ABCDEFGHIJKLMNOPQRSTUVWXYZ")
 
     def next(self):
+        """Return the next unique reference string in the sequence."""
         return next(self._it)
 
 
@@ -99,6 +102,9 @@ class Api:
     """Minimal Zabbix JSON-RPC client. Token from env ZTOKEN only."""
 
     def __init__(self, url, timeout=20):
+        """Prepare a Zabbix API client for the given URL, taking the auth
+        token from the ZTOKEN environment variable (never from argv) and
+        raising ZabbixError if it is unset."""
         if not url.endswith(".php"):
             url = url.rstrip("/") + "/api_jsonrpc.php"
         self.url = url
@@ -112,6 +118,9 @@ class Api:
         self._id = itertools.count(1)
 
     def call(self, method, params):
+        """Issue one JSON-RPC request and return its result. Connection,
+        HTTP, non-JSON, and API-level errors are all raised as ZabbixError
+        with a clear message and no token leaked."""
         body = json.dumps({
             "jsonrpc": "2.0", "method": method,
             "params": params, "id": next(self._id),
@@ -176,10 +185,13 @@ def resolve_itemids(api, hostid):
 
 
 def _f(ftype, name, value):
+    """Build one Zabbix widget field dict (type, name, stringified value)."""
     return {"type": ftype, "name": name, "value": str(value)}
 
 
 def widget(wtype, x, y, w, h, name="", fields=None):
+    """Assemble a generic dashboard widget dict at a grid position; the
+    typed builders below wrap this with their own field lists."""
     return {"type": wtype, "name": name, "x": x, "y": y,
             "width": w, "height": h, "fields": fields or []}
 

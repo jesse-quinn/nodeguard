@@ -86,10 +86,12 @@ MAP_HEADROOM = 0.80
 
 
 def log(msg):
+    """Print a line to stdout and flush immediately so journald sees it in order."""
     print(msg, flush=True)
 
 
 def read_kv_file(path, defaults=None):
+    """Parse a simple KEY=value config file (comments and surrounding quotes stripped) layered over a set of defaults."""
     conf = dict(defaults or {})
     try:
         with open(path) as f:
@@ -104,7 +106,8 @@ def read_kv_file(path, defaults=None):
 
 
 def load_json(path, default):
-    """default for a MISSING file; None for a CORRUPT one, so callers can
+    """Read a JSON state file, telling a missing file apart from a corrupt one.
+    default for a MISSING file; None for a CORRUPT one, so callers can
     tell benign first-run absence from damage that must alarm."""
     try:
         with open(path) as f:
@@ -116,6 +119,7 @@ def load_json(path, default):
 
 
 def save_json(path, data):
+    """Write data as JSON atomically (temp file then rename) so a crash never leaves a half-written state file."""
     os.makedirs(os.path.dirname(path), exist_ok=True)
     tmp = path + ".tmp"
     with open(tmp, "w") as f:
@@ -124,6 +128,7 @@ def save_json(path, data):
 
 
 def boot_id():
+    """Read the kernel's current boot id, used to tell a reboot (maps wiped, monotonic clock reset) from a warm restart."""
     with open(BOOT_ID_PATH) as f:
         return f.read().strip()
 
@@ -131,7 +136,8 @@ def boot_id():
 # ------------------------------------------------------------ fetch layer
 
 def fetch(feed, meta, max_bytes):
-    """Return (status, body, hdrs). Side-effect free on meta: the caller
+    """Perform one conditional HTTP GET of a feed URL under a byte cap.
+    Return (status, body, hdrs). Side-effect free on meta: the caller
     persists conditional-GET state only after full validation."""
     d = FEED_DEFS[feed]
     req = urllib.request.Request(d["url"], headers={
@@ -158,7 +164,8 @@ def fetch(feed, meta, max_bytes):
 # --------------------------------------------------------------- parsers
 
 def parse_spamhaus(body):
-    """JSONL of {cidr, sblid, ...} with a REQUIRED metadata trailer whose
+    """Validate and parse a Spamhaus DROP feed body into (network, reference) records.
+    JSONL of {cidr, sblid, ...} with a REQUIRED metadata trailer whose
     records field must equal the record count (the truncation check)."""
     records = []
     trailer = None
@@ -187,7 +194,8 @@ def parse_spamhaus(body):
 
 
 def parse_dshield(body):
-    """'#' header; data lines: start_ip<TAB>end_ip<TAB>netmask<TAB>...
+    """Validate and parse a DShield block list body into (network, name) records.
+    '#' header; data lines: start_ip<TAB>end_ip<TAB>netmask<TAB>...
     Each must form a /24 whose broadcast equals end_ip."""
     records = []
     for i, ln in enumerate(body.decode("utf-8", "strict").splitlines()):
@@ -213,6 +221,7 @@ PARSERS = {"spamhaus": parse_spamhaus, "dshield": parse_dshield}
 # ------------------------------------------------------------- gate layer
 
 def coverage(nets):
+    """Sum how much address space a set of networks covers (v4 host count, v6 /48-equivalents), the input to the coverage gates."""
     v4 = sum(n.num_addresses for n in nets if n.version == 4)
     v6 = sum((2 ** (48 - n.prefixlen)) if n.prefixlen <= 48 else 1
              for n in nets if n.version == 6)
@@ -231,14 +240,17 @@ def allow_snapshot():
 # --------------------------------------------------------------- journal
 
 def jkey(net):
+    """Return the canonical string key for a network, its identity in the journal and the dedupe sets."""
     return str(net)
 
 
 def encode_value(expiry_ns, hits):
+    """Pack a block-map value (expiry nanoseconds and hit count) into its on-wire bytes."""
     return struct.pack("<QQ", expiry_ns, hits)
 
 
 def decode_value(raw):
+    """Unpack block-map value bytes back into (expiry_ns, hits); the inverse of encode_value."""
     return struct.unpack("<QQ", raw)
 
 
@@ -249,7 +261,10 @@ class GateAbort(SystemExit):
 
 
 class Runner:
+    """One feeds run: loads journal and approval state, then fetches, gates, and reconciles every configured feed into the block maps."""
+
     def __init__(self, conf):
+        """Load config, environment, journal state, and approvals, and decide whether this run is a bounded crash-adoption recovery."""
         self.conf = conf
         self.env = read_kv_file(ENV)
         self.canary = self.env.get("CANARY_IP", "")
@@ -287,12 +302,15 @@ class Runner:
                 "mode for this run")
 
     def dline(self, s):
+        """Append one line to the human-readable diff written at the end of the run."""
         self.diff_lines.append(s)
 
     def feed_meta(self, feed):
+        """Return (creating if needed) the persisted per-feed metadata block (etag, digests, baseline)."""
         return self.state["feeds"].setdefault(feed, {})
 
     def configured(self):
+        """Return the ordered, de-duplicated list of known feed ids to process this run."""
         # Design section 3: FEEDS_DRYRUN + FEEDS_APPLY order decides
         # cross-feed dedupe provenance.
         dry = self.conf["FEEDS_DRYRUN"].split()
@@ -307,6 +325,7 @@ class Runner:
         return out
 
     def enforcing(self, feed):
+        """True only when a feed clears the full double gate (config enforce plus FEEDS_APPLY plus approved.json) and may actually write blocks."""
         return (self.conf["FEEDS_ENFORCE"].lower() == "yes"
                 and feed in self.conf["FEEDS_APPLY"].split()
                 and feed in self.approved.get("feeds", []))
@@ -509,7 +528,8 @@ class Runner:
     # --------------------------------------------------------- reconcile
 
     def _mutate(self, fn, feed, k):
-        """SAFETY: one bpftool failure costs one key, never the batch;
+        """Run one map write for a key, containing any bpftool error to that single key.
+        SAFETY: one bpftool failure costs one key, never the batch;
         nothing here can skip a guard, only skip a write."""
         try:
             fn()
@@ -518,6 +538,7 @@ class Runner:
             self.dline(f"map-error {feed} {k}: {e}")
 
     def reconcile(self, feed, desired, enforce):
+        """Bring one feed's owned block-map entries in line with its desired set (insert, refresh, withdraw) under the compare-and-swap ownership rules, or just plan the diff when not enforcing."""
         entries = self.state["entries"]
         mine = {k: v for k, v in entries.items() if v.get("feed") == feed}
         planned = {"insert": [], "refresh": [], "withdraw": [], "skip": []}
@@ -640,6 +661,7 @@ class Runner:
     # --------------------------------------------------------------- run
 
     def run(self):
+        """Execute a full feeds run end to end, guarding all writes behind the allow-map snapshot and clearing crash-adoption state on a gate abort."""
         feeds = self.configured()
         allow = allow_snapshot()
         fams_needed = {FEED_DEFS[f]["family"] for f in feeds}
@@ -669,6 +691,7 @@ class Runner:
             return 1
 
     def _run_inner(self, feeds, allow):
+        """The core fetch, gate, and per-feed reconcile pass, run once the pre-write allow-map guard has passed."""
         reboot = self.prev_boot is not None and self.prev_boot != self.boot
         if reboot:
             # maps wiped, CLOCK_MONOTONIC restarted: withdrawals would
@@ -710,6 +733,7 @@ class Runner:
         return 1 if (self.failed or self.map_errors) else 0
 
     def finish(self, feeds, summary=None):
+        """Write the diff file, log the summary and notable lines, and emit the metrics kv; the common end-of-run reporting for every mode."""
         os.makedirs(STATE_DIR, exist_ok=True)
         with open(DIFF + ".tmp", "w") as f:
             f.write(f"# nodeguard-feeds diff, {time.ctime(self.now)}\n")
@@ -724,6 +748,7 @@ class Runner:
         self.write_kv(feeds)
 
     def write_kv(self, feeds):
+        """Write the Zabbix-style metrics kv file describing this run (enforce state, counts, per-feed freshness)."""
         mismatch = 0
         approved = self.approved.get("feeds", [])
         if approved and (self.conf["FEEDS_ENFORCE"].lower() != "yes"
@@ -801,15 +826,18 @@ def pending_diff(conf):
 
 
 def mode_run(conf, _a):
+    """run subcommand: perform a full fetch-and-reconcile run."""
     return Runner(conf).run()
 
 
 def mode_diff(conf, _a):
+    """diff subcommand: print the pending changes computed from cached snapshots, without fetching or writing."""
     _r, rc = pending_diff(conf)
     return rc
 
 
 def mode_apply(conf, a):
+    """apply subcommand: show the pending diff, record human approval for a feed, then do the first enforcing run for it."""
     if not a.feed:
         raise SystemExit("apply requires --feed <id>")
     if not a.confirm:
@@ -854,6 +882,7 @@ def mode_apply(conf, a):
 
 
 def mode_withdraw(conf, a):
+    """withdraw subcommand: remove this loader's owned entries (optionally for one feed) and revoke that feed's approval."""
     if not a.confirm:
         raise SystemExit("withdraw requires the literal --confirm flag")
     r = Runner(conf)
@@ -892,6 +921,7 @@ def mode_withdraw(conf, a):
 
 
 def mode_status(conf, _a):
+    """status subcommand: print current enforcement, approvals, owned-entry counts, and per-feed freshness."""
     r = Runner(conf)
     print(f"enforce={conf['FEEDS_ENFORCE']} "
           f"approved={r.approved.get('feeds', [])} "
@@ -912,6 +942,7 @@ def mode_status(conf, _a):
 
 
 def main():
+    """Parse the subcommand, load config, and dispatch to the matching mode handler; the nodeguard-feeds entry point."""
     ap = argparse.ArgumentParser(prog="nodeguard-feeds")
     sub = ap.add_subparsers(dest="mode", required=True)
     for m in ("run", "diff", "status"):

@@ -33,6 +33,13 @@ import yaml
 
 
 def main():
+    """Generate one host's suricata.yaml from the stock config and a params file.
+
+    Reads the JSON parameter file and the stock suricata.yaml, overlays the
+    per-host settings (HOME_NET, one or more af-packet capture interfaces,
+    CPU affinity, alert-only EVE output, stream bypass, unix-command), and
+    writes the merged YAML to --out for on-host validation with suricata -T.
+    """
     ap = argparse.ArgumentParser()
     ap.add_argument("--stock", required=True)
     ap.add_argument("--params", required=True)
