@@ -193,7 +193,7 @@ and any restart reloads it.
 
 ## 3. Phase 3: kernel stats2 (one sitting per host; minutes, not days)
 
-- [ ] 3.1 src/nodeguard_kern.c: add PERCPU_ARRAY stats2 (max_entries
+- [x] 3.1 src/nodeguard_kern.c: add PERCPU_ARRAY stats2 (max_entries
       16, LIBBPF_PIN_BY_NAME), count2() helper, seven counters
       (ST2_TCP_SYNFIN, ST2_TCP_SYNRST, ST2_TCP_NULL, ST2_TCP_XMAS,
       ST2_TTL_LOW, ST2_FRAG_V4, ST2_FRAG_V6, ST2_MAX=16); parse rules
@@ -203,22 +203,22 @@ and any restart reloads it.
       bounds failure not counted as parsefail); NG_TTL_LOW_FLOOR
       build-time define defaulting to 5 with the no-published-threshold
       comment
-- [ ] 3.2 Move the kill-switch check from main()
+- [x] 3.2 Move the kill-switch check from main()
       (src/nodeguard_kern.c:275-280) into handle_v4/handle_v6, after
       the sanity block and before any verdict lookup; still resolves
       to XDP_PASS; record the latch-window rationale and the reload
       double-count artifact in ADR 0007
-- [ ] 3.3 build/build.sh: derive the map list from the throwaway load's
+- [x] 3.3 build/build.sh: derive the map list from the throwaway load's
       pins (`ls "$SPEC_PIN"`) and use it in all three hardcoded sites:
       stray-pin cleanup (build.sh:30), spec generation (build.sh:47),
       and the rehearsal identity loop (build.sh:84); add the build-
       failing assertions (derived set contains the core six; derived
       set equals the BTF-declared map set from `bpftool btf dump`)
-- [ ] 3.4 deploy/deploy.sh: add --with-kernel; default runs neither
+- [x] 3.4 deploy/deploy.sh: add --with-kernel; default runs neither
       require, stage, nor install nodeguard_kern.o or
       nodeguard-maps.spec; with the flag, both required and installed
       as today
-- [ ] 3.5 Netns rehearsal additions: crafted-packet sanity assertions
+- [x] 3.5 Netns rehearsal additions: crafted-packet sanity assertions
       (python3 raw sockets sending NULL, XMAS, SYN+FIN, SYN+RST,
       low-TTL, fragmented probes; each counter increments, verdict
       stays XDP_PASS with service continuity); rollback rehearsal
@@ -229,28 +229,28 @@ and any restart reloads it.
       unlatched under the same load, confirming the full-header-parse-
       during-latch cost claim before any gateway sees the object;
       record the numbers
-- [ ] 3.7 Build gate (phase 3): fedora:44 container build regenerates
+- [x] 3.7 Build gate (phase 3): fedora:44 container build regenerates
       object and spec via the derived-map-list generator; full netns
       rehearsal green in both reload directions
-- [ ] 3.8 Deploy node-3 with --with-kernel; create the stats2 pin with
+- [x] 3.8 Deploy node-3 with --with-kernel; create the stats2 pin with
       EXACTLY `systemctl reload nodeguard-maps` (or `python3 $NG_MAP
       create-maps --spec $NG_SPEC`); NEVER `systemctl restart
       nodeguard-maps`, which propagates through Requires= to
       nodeguard-xdp and blips the WAN link; runbook treats deploy,
       create-maps, and reload as one sitting (the untested-object
       window between install and reload is minutes by procedure)
-- [ ] 3.9 Gate before reload: `bpftool map show pinned $NG_PIN/stats2`
+- [x] 3.9 Gate before reload: `bpftool map show pinned $NG_PIN/stats2`
       succeeds AND the six existing pin ids are unchanged (`bpftool
       map show -j` diff)
-- [ ] 3.10 Run nodeguard-reload; gate: zero carrier transitions
+- [x] 3.10 Run nodeguard-reload; gate: zero carrier transitions
       (ip -s link counters plus ping continuity)
-- [ ] 3.11 Gate: original stats counters monotonic across the swap
+- [x] 3.11 Gate: original stats counters monotonic across the swap
       (brief ST_PASS inflation from dual-attach is expected and
       documented)
 - [ ] 3.12 Gate: a NULL-scan probe from a non-allowlisted, non-blocked
       host increments tcp_null while receiving service (fail-open
       observed live)
-- [ ] 3.13 Gate: ng.prog_match=1 and the stats2 template items flip to
+- [x] 3.13 Gate: ng.prog_match=1 and the stats2 template items flip to
       supported within one poll cycle
 - [ ] 3.14 Gate: 24h soak on node-3, then repeat 3.8 to 3.13 on node-2
 
