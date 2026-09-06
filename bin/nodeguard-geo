@@ -16,13 +16,14 @@ Outputs (atomic tmp+rename):
   top blocked sources plotted, sized by hit volume; served to the
   dashboard via a URL widget.
 
-The DB-IP lite country/city CSV (ip-to-lat/long) is expected at
-/usr/local/share/nodeguard/dbip.csv.gz (start_ip,end_ip,continent,country,
-...,lat,lon,...); install.sh fetches it. No external calls at runtime.
+The DB-IP lite ranges are pre-indexed by build/install-geoip.sh into two
+files (dbip.starts: u32 range starts for bisect; dbip.recs: 14-byte packed
+records), so a run loads and bisects in milliseconds instead of parsing
+85 MB of CSV. No external calls at runtime.
 """
 
-import csv
-import gzip
+import array
+import bisect
 import ipaddress
 import json
 import os
@@ -31,7 +32,8 @@ import subprocess
 import sys
 
 PIN = "/sys/fs/bpf/nodeguard"
-DBIP = "/usr/local/share/nodeguard/dbip.csv.gz"
+DBIP_STARTS = "/usr/local/share/nodeguard/dbip.starts"
+DBIP_RECS = "/usr/local/share/nodeguard/dbip.recs"
 GEO_KV = "/run/zabbix/geo.kv"
 MAP_SVG = "/var/lib/nodeguard/attack-map.svg"
 BPFTOOL = "/usr/sbin/bpftool"
@@ -70,49 +72,41 @@ def block_hits():
     return out
 
 
+REC_SIZE = 14  # struct "<IIhh2s": start u32, end u32, lat i16, lon i16, cc
+
+
 def load_dbip():
-    """Load the DB-IP lite ranges as a sorted list of
-    (start_int, end_int, country, lat, lon) for binary search. Returns []
-    if the DB is absent, which cleanly degrades to no geolocation."""
-    if not os.path.exists(DBIP):
-        log(f"geo: {DBIP} absent; country/map output will be empty")
-        return []
-    rows = []
+    """Load the pre-built index: the u32 starts array (for bisect) and an
+    mmap-like handle to the packed records. Returns (starts, recs_bytes)
+    or (None, None) if the index is absent, which degrades to no
+    geolocation. Milliseconds, not minutes."""
+    if not (os.path.exists(DBIP_STARTS) and os.path.exists(DBIP_RECS)):
+        log(f"geo: index absent ({DBIP_STARTS}); country/map output empty")
+        return None, None
     try:
-        with gzip.open(DBIP, "rt") as f:
-            for r in csv.reader(f):
-                # DB-IP lite city-lite: start,end,continent,country,
-                # stateprov,city,lat,lon
-                if len(r) < 8:
-                    continue
-                try:
-                    start = int(ipaddress.ip_address(r[0]))
-                    end = int(ipaddress.ip_address(r[1]))
-                except ValueError:
-                    continue
-                if ipaddress.ip_address(r[0]).version != 4:
-                    continue
-                rows.append((start, end, r[3], float(r[6]), float(r[7])))
+        starts = array.array("I")
+        with open(DBIP_STARTS, "rb") as f:
+            starts.frombytes(f.read())
+        recs = open(DBIP_RECS, "rb").read()
+        return starts, recs
     except Exception as e:
-        log(f"geo: DB-IP parse failed ({e}); empty result")
-        return []
-    rows.sort()
-    return rows
+        log(f"geo: index load failed ({e}); empty result")
+        return None, None
 
 
-def geolocate(ip_int, rows):
-    """Binary-search the sorted DB-IP ranges for the ip; return
-    (country, lat, lon) or None. Pure lookup, no side effects."""
-    lo, hi = 0, len(rows)
-    while lo < hi:
-        mid = (lo + hi) // 2
-        start, end, country, lat, lon = rows[mid]
-        if ip_int < start:
-            hi = mid
-        elif ip_int > end:
-            lo = mid + 1
-        else:
-            return country, lat, lon
+def geolocate(ip_int, db):
+    """Bisect the starts array for the range containing ip_int, confirm it
+    is within that range's end, and return (country, lat, lon) or None."""
+    starts, recs = db
+    if not starts:
+        return None
+    i = bisect.bisect_right(starts, ip_int) - 1
+    if i < 0:
+        return None
+    off = i * REC_SIZE
+    s, e, lat, lon, cc = struct.unpack("<IIhh2s", recs[off:off + REC_SIZE])
+    if s <= ip_int <= e:
+        return cc.decode("ascii", "replace").strip(), lat / 100.0, lon / 100.0
     return None
 
 
@@ -172,14 +166,14 @@ def write_atomic(path, content, mode="w"):
 
 def main():
     hits = block_hits()
-    rows = load_dbip()
+    db = load_dbip()
     top = sorted(hits.items(), key=lambda kv: -kv[1][1])[:TOP_N]
 
     countries = {}
     points = []
     located = 0
     for ip_int, (cidr, n) in top:
-        g = geolocate(ip_int, rows) if rows else None
+        g = geolocate(ip_int, db) if db[0] else None
         if g is None:
             continue
         country, lat, lon = g
